@@ -1,114 +1,117 @@
-# ThreatVision — AI-Based Scene Understanding and Threat Detection Using Video Analytics
+# ThreatVision: AI-Based Scene Understanding and Threat Detection Using Video Analytics
 
-A real-time video analytics system that:
+ThreatVision watches a camera or a video file in real time and:
 
-1. **Counts people and estimates their gender** — YOLOv8-pose detection + ByteTrack tracking, face-DNN / body-CNN gender estimation with per-track voting.
-2. **Recognises human activities** — *standing, walking, running, fighting, falling* from skeleton sequences (rule-based baseline, Bi-LSTM + attention, Temporal ConvNet).
-3. **Understands interactions and context** — physical altercations, chasing, loitering, restricted-zone intrusion, person down (no recovery), group gathering, crowding, panic running, abandoned bags, presence during quiet hours.
-4. **Assesses threats in real time** — explainable 0–100 threat score → LOW / MEDIUM / HIGH / CRITICAL, de-duplication and escalation, snapshots, notifications (dashboard, sound, e-mail, webhook, Telegram).
-5. **Monitoring dashboard** — live annotated video, scene statistics, live alert feed with acknowledgement, event history with filters and CSV export, analytics, source switching / video upload.
-6. **Evaluation** — accuracy, precision, recall, F1-score, AP@0.5, counting accuracy, FPS and latency for every algorithm, shown on the dashboard's *Performance metrics* page.
+1. **Counts people and estimates their gender.** YOLOv8-pose finds people and ByteTrack follows them from frame to frame. Gender comes from a face DNN or a body CNN, with votes added up per person. The number of people, men and women is shown above the video and on the video itself.
+2. **Recognises activities:** *standing, walking, running, fighting, falling*, from the body skeleton. There is a rule-based classifier, plus a Bi-LSTM with attention and a Temporal ConvNet you can train.
+3. **Understands what is going on in the scene:** fights between people, chasing, loitering, a person down after a fall, groups gathering, crowds, panic running, bags left behind, and people present during quiet hours.
+4. **Scores threats as they happen.** Each event gets a 0-100 score that explains how it was built, and a level (LOW / MEDIUM / HIGH / CRITICAL). Repeated alerts are merged, and alerts can escalate. Each alert saves a snapshot and can notify the dashboard (with sound), e-mail, a webhook or Telegram.
+5. **Shows everything on a dashboard:** the live annotated video with an on/off switch, scene statistics, a live alert feed with acknowledgement, the event history with filters and CSV export, and source switching / video upload.
+6. **Reports how well each algorithm works.** The *Analytics* page lists accuracy, precision, recall, F1 score, the confusion matrix and frames per second for each algorithm, as plain text.
 
 ```
- video ──► detection + tracking ──► gender ──► activity ──► scene / interaction ──► threat ──► alerts
- (file,     YOLOv8-pose + ByteTrack   face DNN    rules /       zones, pairs, groups,     score,    dashboard (SSE),
-  webcam,   (or HOG + IoU tracker)    body CNN    LSTM / TCN    objects, time context     level,    e-mail, webhook,
-  RTSP)                                                                                   dedupe    SQLite history
+ video --> detection + tracking --> gender --> activity --> scene analysis --> threat --> alerts
+ (webcam,   YOLOv8-pose + ByteTrack   face DNN    rules /       pairs, groups,     score,    dashboard,
+  file,     (or HOG + IoU tracker)    body CNN    LSTM / TCN    bags, time of day  level     e-mail, webhook,
+  RTSP)                                                                                      SQLite history
 ```
-
----
 
 ## 1. Installation
 
 ```bash
 python -m venv .venv && source .venv/bin/activate          # Windows: .venv\Scripts\activate
-pip install -r requirements.txt                              # (GPU: install the CUDA build of torch first)
+pip install -r requirements.txt                              # for a GPU, install the CUDA build of torch first
 python scripts/download_models.py                            # YOLOv8 weights, face + gender models, COCO128
 ```
 
-## 2. Run
+`opencv-python` is pinned below version 5, because OpenCV 5 can no longer load the Caffe face and gender models.
+
+## 2. Running it
 
 ```bash
-python run.py --source simulated                 # synthetic test scene - works without camera or models
+python run.py                                    # webcam 0 (the default in config.yaml)
+python run.py --source 1                         # another webcam
 python run.py --source data/videos/clip.mp4      # a video file
-python run.py --source 0                         # webcam
-python run.py --source rtsp://user:pw@ip/stream  # IP camera
-python run.py --activity lstm                    # use the trained Bi-LSTM (after training, see §4)
+python run.py --source rtsp://user:pw@ip/stream  # an IP camera
+python run.py --activity lstm                    # use the trained Bi-LSTM (see section 4)
 ```
-Open **http://localhost:5000**. Pages: *Live monitor · Event history · Analytics · Performance metrics · Sources & settings*.
-The source can also be switched, or a video uploaded, from *Sources & settings*.
 
-All parameters (zones, thresholds, scores, notification channels) are in `config.yaml`.
-Zones are polygons in normalised image coordinates, so they fit any resolution.
+Open **http://localhost:5000**. The pages are *Live monitor*, *Event history*, *Analytics* and *Sources & settings*.
+The **Turn feed off** button on the Live monitor releases the camera and stops the analysis until you turn the feed back on.
+You can also switch the source or upload a video from *Sources & settings*.
 
-## 3. Project structure
+Every setting (thresholds, scores, notification channels) is in `config.yaml`.
+
+## 3. Project layout
 
 ```
-run.py                       start pipeline + dashboard
+run.py                       starts the pipeline and the dashboard
 config.yaml                  all settings
 src/
   core.py                    Detection / SceneEvent / ThreatAlert data classes
-  detection/detector.py      YOLOv8-pose + ByteTrack, HOG+SVM baseline, simulated detector
-  tracking/                  IoU tracker (for HOG), per-person temporal state (TrackState)
-  gender/                    face DNN (Levi-Hassner), body CNN (MobileNetV3), hybrid, per-track voting
-  activity/                  features, rule-based classifier, Bi-LSTM & TCN models, dataset utils
-  scene/analyzer.py          interaction + context analysis -> SceneEvents
-  threat/assessment.py       scoring, levels, de-duplication, escalation
-  threat/alerts.py           snapshots, SQLite, live push, e-mail / webhook / Telegram
-  storage/db.py              event history + occupancy statistics (SQLite)
-  pipeline/processor.py      real-time processing thread, stage timing
-  pipeline/simulator.py      scripted synthetic scene with ground truth (self-test)
-  evaluation/metrics.py      accuracy, P/R/F1, confusion matrix, AP, event matching
-  dashboard/                 Flask app, templates, CSS, JS (no external CDN needed)
+  detection/detector.py      YOLOv8-pose + ByteTrack, and the HOG + SVM baseline
+  tracking/                  IoU tracker (for HOG) and what we remember per person (TrackState)
+  gender/                    face DNN (Levi-Hassner), body CNN (MobileNetV3), hybrid
+  activity/                  features, rule-based classifier, Bi-LSTM and TCN models, dataset tools
+  scene/analyzer.py          turns people's activities and positions into scene events
+  threat/assessment.py       scoring, levels, merging repeated alerts, escalation
+  threat/alerts.py           snapshots, storage, live push, e-mail / webhook / Telegram
+  storage/db.py              alert history (SQLite)
+  pipeline/processor.py      the real-time processing thread and per-stage timing
+  pipeline/draw.py           boxes, skeletons, counts and alerts drawn on the video
+  evaluation/metrics.py      accuracy, precision / recall / F1, confusion matrix, AP, event matching
+  evaluation/report.py       plain-text results used by the Analytics page and evaluate.py
+  dashboard/                 Flask app, templates, CSS and JS (no external CDN needed)
 scripts/
   download_models.py         pretrained weights + COCO128
   extract_pose_dataset.py    videos -> pose-sequence dataset (.npz)
-  train_activity.py          train Bi-LSTM / TCN
-  train_gender.py            train body-gender CNN;  prepare_pa100k.py converts PA-100K
-  evaluate.py                all evaluations -> results/metrics.json (dashboard)
-tests/test_pipeline.py       unit + end-to-end tests  (python -m pytest -q)
+  train_activity.py          trains the Bi-LSTM / TCN
+  train_gender.py            trains the body-gender CNN; prepare_pa100k.py converts PA-100K for it
+  evaluate.py                runs the evaluations and saves results/metrics.json
+tests/test_pipeline.py       tests (python -m pytest -q)
 docs/                        project report
 ```
 
 ## 4. Training the learned models
 
 **Activity (Bi-LSTM / TCN).** Put clips in `data/activity_videos/<class>/` for the classes
-`standing, walking, running, fighting, falling` (or supply frame-level annotations as CSV).
-Good public sources: *Le2i Fall*, *UR Fall Detection* (falling); *RWF-2000*, *Hockey Fight*, *Surveillance Camera Fight* (fighting);
+`standing, walking, running, fighting, falling`, or label frames in a CSV file.
+Good public sources: *Le2i Fall* and *UR Fall Detection* (falling); *RWF-2000*, *Hockey Fight* and *Surveillance Camera Fight* (fighting);
 *KTH*, *UCF-101* or your own CCTV footage (walking, running, standing).
 ```bash
 python scripts/extract_pose_dataset.py --videos data/activity_videos --out data/activity/dataset.npz
 python scripts/train_activity.py --data data/activity/dataset.npz --model lstm
 python scripts/train_activity.py --data data/activity/dataset.npz --model tcn
 ```
-The split is per video, so no clip is in both training and test data.
+The data is split by video, so no clip ends up in both the training and the test set.
 
-**Gender (body CNN).** CCTV faces are often too small, so a full-body classifier is trained on PA-100K / PETA:
+**Gender (body CNN).** CCTV faces are often too small to use, so a full-body classifier is trained on PA-100K or PETA:
 ```bash
 python scripts/prepare_pa100k.py --root /path/to/PA-100K --out data/gender
 python scripts/train_gender.py --data data/gender
 ```
 
-## 5. Evaluation (shown on the dashboard)
+## 5. Evaluation (shown on the Analytics page)
 
 ```bash
 python scripts/evaluate.py detection --images data/eval/coco128 --algorithms yolov8n-pose,yolov8s-pose,hog
 python scripts/evaluate.py gender    --images data/gender/test --algorithms face_dnn,body_cnn,hybrid
 python scripts/evaluate.py activity  --data data/activity/dataset.npz --algorithms rule_based,lstm,tcn
 python scripts/evaluate.py threat    --videos data/eval/threat --annotations data/eval/threat/events.json
-python scripts/evaluate.py speed     --video data/videos/clip.mp4 --configs yolo+rule_based,yolo+lstm,yolo+tcn,hog+rule_based
+python scripts/evaluate.py speed     --video data/videos/clip.mp4 --configs yolo+rule_based,hog+rule_based
 ```
-Each command updates one section of `results/metrics.json`; reload the *Performance metrics* page.
-Threat annotations format: `{"clip1.mp4": [{"type": "physical_altercation", "start": 12.0, "end": 19.5}, ...]}`.
+Each command prints its results and updates one section of `results/metrics.json`. Reload the *Analytics* page to see them.
+Threat annotations look like `{"clip1.mp4": [{"type": "physical_altercation", "start": 12.0, "end": 19.5}, ...]}`.
+The Analytics page also shows the live frames per second of each stage while the system runs.
 
-**Results included in this package** (`results/metrics.json`):
-* Detection — **HOG + SVM baseline on COCO128** (real images). YOLOv8 rows appear after you run the command above with ultralytics installed.
-* Activity, threat events and speed — measured on the **synthetic self-test scene**, which checks that
-  the code works end to end. These numbers do **not** measure real-world accuracy. Replace them by running the commands on real annotated footage.
+**Results included in `results/metrics.json`:**
+* Person detection for YOLOv8n-pose, YOLOv8s-pose and HOG + SVM, measured on the 128 real images of COCO128.
+  About a third of the people labelled there are very small (under 10% of the image height). This is why recall is low at the 0.40 confidence threshold.
+* Gender, activity and threat detection need labelled test data (see section 4). Until you run those commands, the Analytics page shows how to produce them.
 
 ## 6. Responsible use
 
-Gender is *estimated from appearance*. It is binary, probabilistic, and may be biased. It is only shown as an aggregate
-statistic and **is never used in threat scoring**. Surveillance analytics must comply with local privacy law
-(for example India's DPDP Act 2023 or the GDPR). Show notices, limit how long footage is kept (snapshots and `data/events.db`), and keep a
-human operator in the loop: alerts are decision *support*.
+Gender is *estimated from appearance*. It is binary, probabilistic, and may be biased. It is only shown as a count
+and **is never used to score threats**. Surveillance analytics must follow local privacy law
+(for example India's DPDP Act 2023 or the GDPR). Put up notices, limit how long footage is kept (snapshots and `data/events.db`),
+and keep a human operator in the loop: the alerts support decisions, they don't make them.

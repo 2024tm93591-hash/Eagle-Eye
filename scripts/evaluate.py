@@ -1,26 +1,25 @@
 #!/usr/bin/env python3
-"""Evaluate every implemented algorithm and write results/metrics.json (shown on the dashboard).
+"""Evaluate the algorithms and save the results to results/metrics.json (shown on the Analytics page).
 
-  detection : person detection + counting on YOLO-format labelled images
-              python scripts/evaluate.py detection --images data/eval/coco128 --algorithms yolov8n-pose,yolov8s-pose,hog
-  gender    : person crops in <dir>/male and <dir>/female (e.g. PA-100K test split)
-              python scripts/evaluate.py gender --images data/gender/test --algorithms face_dnn,body_cnn,hybrid
-  activity  : pose-sequence test split (same per-video split as training)
-              python scripts/evaluate.py activity --data data/activity/dataset.npz --algorithms rule_based,lstm,tcn
-  threat    : annotated clips; JSON {"clip.mp4": [{"type": "fall", "start": 3.0, "end": 9.5}, ...]}
-              python scripts/evaluate.py threat --videos data/eval/threat --annotations data/eval/threat/events.json
-              python scripts/evaluate.py threat --simulated           (synthetic self-test scene)
-  speed     : end-to-end FPS / latency per pipeline configuration
-              python scripts/evaluate.py speed --video data/videos/clip.mp4 --configs yolo+rule_based,yolo+lstm,hog+rule_based
+  detection  person detection and counting on YOLO-format labelled images
+             python scripts/evaluate.py detection --images data/eval/coco128 --algorithms yolov8n-pose,yolov8s-pose,hog
+  gender     person crops sorted into <dir>/male and <dir>/female (e.g. the PA-100K test split)
+             python scripts/evaluate.py gender --images data/gender/test --algorithms face_dnn,body_cnn,hybrid
+  activity   the test split of a pose-sequence dataset (same per-video split as training)
+             python scripts/evaluate.py activity --data data/activity/dataset.npz --algorithms rule_based,lstm,tcn
+  threat     annotated clips, with a JSON file like {"clip.mp4": [{"type": "fall", "start": 3.0, "end": 9.5}]}
+             python scripts/evaluate.py threat --videos data/eval/threat --annotations data/eval/threat/events.json
+  speed      end-to-end frames per second for different pipeline setups
+             python scripts/evaluate.py speed --video data/videos/clip.mp4 --configs yolo+rule_based,hog+rule_based
 
-Metrics: accuracy, precision, recall, F1-score (macro-averaged for multi-class), AP@0.5 and counting
-accuracy for detection, and processing speed (FPS / latency) for every algorithm.
+Every command reports accuracy, precision, recall, F1 score, the confusion matrix and speed.
 """
 from __future__ import annotations
 
 import argparse
 import copy
 import json
+import platform
 import sys
 import time
 from pathlib import Path
@@ -31,351 +30,366 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.config import load_config, resolve_path  # noqa: E402
 from src.evaluation.metrics import classification_report, detection_metrics, event_metrics  # noqa: E402
+from src.evaluation.report import algorithm_report  # noqa: E402
 
-IMG_EXT = {".jpg", ".jpeg", ".png", ".bmp"}
+IMAGE_EXT = {".jpg", ".jpeg", ".png", ".bmp"}
+
+# event types that can be matched against annotations
+EVAL_TYPES = ["loitering", "physical_altercation", "fighting", "fall", "person_down", "chasing",
+              "abandoned_object", "group_gathering", "crowd_gathering", "panic_running"]
 
 
-# ----------------------------------------------------------------------------- results file
 def save_section(cfg, section: str, payload: dict):
-    p = resolve_path(cfg["dashboard"]["metrics_file"])
-    p.parent.mkdir(parents=True, exist_ok=True)
-    data = json.loads(p.read_text()) if p.exists() else {}
+    path = resolve_path(cfg["dashboard"]["metrics_file"])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = json.loads(path.read_text()) if path.exists() else {}
     data[section] = payload
     data["generated_at"] = time.strftime("%Y-%m-%d %H:%M")
-    p.write_text(json.dumps(data, indent=2))
-    print(f"\n-> results written to {p} [{section}]")
+    path.write_text(json.dumps(data, indent=2))
+    print(f"\nSaved to {path} [{section}]")
 
 
-def print_table(title, algos: dict, keys):
+def print_results(title, results: dict, labels=None):
     print(f"\n{title}")
-    print(f"{'algorithm':42s}" + "".join(f"{k:>12s}" for k in keys))
-    for n, m in algos.items():
-        print(f"{n[:42]:42s}" + "".join(f"{m.get(k, float('nan')):12.4f}" if isinstance(m.get(k), (int, float))
-                                        else f"{'-':>12s}" for k in keys))
+    print("=" * len(title))
+    for name, metrics in results.items():
+        print(f"\n{name}\n{'-' * len(name)}")
+        print(algorithm_report(metrics, labels))
 
 
-# ----------------------------------------------------------------------------- detection
-def read_yolo_labels(lbl: Path, w, h):
+def resize_to(frame, width):
+    if not width:
+        return frame
+    scale = width / frame.shape[1]
+    return cv2.resize(frame, None, fx=scale, fy=scale)
+
+
+def read_yolo_labels(label_file: Path, w, h):
+    """Person boxes (class 0) from a YOLO label file, converted to pixel x1, y1, x2, y2."""
     boxes = []
-    if lbl.exists():
-        for line in lbl.read_text().splitlines():
-            p = line.split()
-            if len(p) >= 5 and int(float(p[0])) == 0:
-                cx, cy, bw, bh = (float(x) for x in p[1:5])
+    if label_file.exists():
+        for line in label_file.read_text().splitlines():
+            parts = line.split()
+            if len(parts) >= 5 and int(float(parts[0])) == 0:
+                cx, cy, bw, bh = (float(x) for x in parts[1:5])
                 boxes.append([(cx - bw / 2) * w, (cy - bh / 2) * h, (cx + bw / 2) * w, (cy + bh / 2) * h])
     return np.array(boxes, float).reshape(-1, 4)
 
 
 def detection_algorithms(cfg, names):
-    algos = {}
-    for n in names:
-        if n == "hog":
+    """Returns {display name: (detect function, operating threshold)}."""
+    algorithms = {}
+    for name in names:
+        if name == "hog":
             from src.detection.detector import HogDetector
-            c = copy.deepcopy(cfg)
-            c["detection"]["hog_threshold"] = -0.5          # keep low-score boxes for the AP curve
-            det = HogDetector(c)
-            thr = cfg["detection"].get("hog_threshold", 0.3)
+            low_cfg = copy.deepcopy(cfg)
+            low_cfg["detection"]["hog_threshold"] = -0.5   # keep weak boxes too, AP needs them
+            hog = HogDetector(low_cfg)
 
-            def fn(img, det=det):
-                ds = det.detect(img)
-                return np.array([d.bbox for d in ds]).reshape(-1, 4), np.array([d.conf * 2 for d in ds])
-            algos["HOG + linear SVM (Dalal-Triggs)"] = (fn, thr)
+            def detect(img, hog=hog):
+                found = hog.detect(img)
+                return np.array([d.bbox for d in found]).reshape(-1, 4), np.array([d.conf * 2 for d in found])
+
+            algorithms["HOG + linear SVM (Dalal-Triggs)"] = (detect, cfg["detection"].get("hog_threshold", 0.3))
         else:
             from ultralytics import YOLO
-            w = n if n.endswith(".pt") else f"{n}.pt"
-            wp = resolve_path(f"models/{w}")
-            model = YOLO(str(wp) if wp.exists() else w)
+            weights = name if name.endswith(".pt") else f"{name}.pt"
+            local = resolve_path(f"models/{weights}")
+            model = YOLO(str(local) if local.exists() else weights)
+            d = cfg["detection"]
 
-            def fn(img, model=model):
-                r = model.predict(img, classes=[0], conf=0.01, iou=cfg["detection"]["iou_threshold"],
-                                  imgsz=cfg["detection"]["imgsz"], device=cfg["detection"].get("device") or None,
-                                  verbose=False)[0]
-                return r.boxes.xyxy.cpu().numpy(), r.boxes.conf.cpu().numpy()
-            algos[Path(w).stem.replace("yolov8", "YOLOv8")] = (fn, cfg["detection"]["conf_threshold"])
-    return algos
+            def detect(img, model=model):
+                result = model.predict(img, classes=[0], conf=0.01, iou=d["iou_threshold"], imgsz=d["imgsz"],
+                                       device=d.get("device") or None, verbose=False)[0]
+                return result.boxes.xyxy.cpu().numpy(), result.boxes.conf.cpu().numpy()
+
+            algorithms[Path(weights).stem.replace("yolov8", "YOLOv8")] = (detect, d["conf_threshold"])
+    return algorithms
 
 
-def eval_detection(cfg, a):
-    root = Path(a.images)
-    img_dir = root / "images" if (root / "images").exists() else root
-    imgs = sorted(p for p in img_dir.rglob("*") if p.suffix.lower() in IMG_EXT)
-    if a.limit:
-        imgs = imgs[:a.limit]
-    print(f"{len(imgs)} images")
+def eval_detection(cfg, args):
+    root = Path(args.images)
+    image_dir = root / "images" if (root / "images").exists() else root
+    images = sorted(p for p in image_dir.rglob("*") if p.suffix.lower() in IMAGE_EXT)
+    if args.limit:
+        images = images[:args.limit]
+    print(f"{len(images)} images")
+
     results = {}
-    for name, (fn, thr) in detection_algorithms(cfg, a.algorithms.split(",")).items():
-        per, t_total = [], 0.0
-        fn(cv2.imread(str(imgs[0])))  # warm-up
-        for p in imgs:
-            img = cv2.imread(str(p))
+    for name, (detect, threshold) in detection_algorithms(cfg, args.algorithms.split(",")).items():
+        detect(cv2.imread(str(images[0])))   # warm-up, so model loading isn't counted in the speed
+        per_image, total_time = [], 0.0
+        for path in images:
+            img = cv2.imread(str(path))
             h, w = img.shape[:2]
-            lbl = Path(str(p).replace("images", "labels")).with_suffix(".txt")
-            t0 = time.perf_counter()
-            pb, ps = fn(img)
-            t_total += time.perf_counter() - t0
-            per.append((pb, ps, read_yolo_labels(lbl, w, h)))
-        m = detection_metrics(per, thr)
-        m["fps"] = round(len(imgs) / t_total, 2)
-        m["latency_ms"] = round(1000 * t_total / len(imgs), 1)
-        m["conf_threshold"] = thr
-        results[name] = m
-    print_table("PERSON DETECTION", results, ["precision", "recall", "f1", "ap50", "count_accuracy", "fps"])
-    save_section(cfg, "detection", {"dataset": a.name or root.name, "samples": len(imgs),
-                                    "notes": "IoU >= 0.5; P/R/F1 at the operating confidence threshold",
-                                    "algorithms": results})
+            label_file = Path(str(path).replace("images", "labels")).with_suffix(".txt")
+            started = time.perf_counter()
+            boxes, scores = detect(img)
+            total_time += time.perf_counter() - started
+            per_image.append((boxes, scores, read_yolo_labels(label_file, w, h)))
+
+        metrics = detection_metrics(per_image, threshold)
+        metrics["fps"] = round(len(images) / total_time, 2)
+        metrics["latency_ms"] = round(1000 * total_time / len(images), 1)
+        metrics["conf_threshold"] = threshold
+        results[name] = metrics
+
+    print_results("PERSON DETECTION", results)
+    gt_people = next(iter(results.values()))["gt_persons"] if results else 0
+    save_section(cfg, "detection", {
+        "dataset": args.name or f"{root.name} ({len(images)} images, {gt_people} people)",
+        "samples": len(images),
+        "notes": "A detection is correct when it overlaps a labelled person with IoU >= 0.5. "
+                 "Detection has no true negatives, so accuracy here is TP / (TP + FP + FN)",
+        "algorithms": results,
+    })
 
 
-# ----------------------------------------------------------------------------- gender
-def eval_gender(cfg, a):
+def eval_gender(cfg, args):
     from src.gender.classifier import build_gender
-    root = Path(a.images)
-    items = [(p, c) for c in ("male", "female") for p in sorted((root / c).glob("*")) if p.suffix.lower() in IMG_EXT]
-    if a.limit:
+
+    root = Path(args.images)
+    items = [(p, label) for label in ("male", "female")
+             for p in sorted((root / label).glob("*")) if p.suffix.lower() in IMAGE_EXT]
+    if args.limit:
         rng = np.random.default_rng(0)
-        items = [items[i] for i in rng.choice(len(items), min(a.limit, len(items)), replace=False)]
+        items = [items[i] for i in rng.choice(len(items), min(args.limit, len(items)), replace=False)]
     print(f"{len(items)} crops")
-    names = {"face_dnn": "Face DNN (Levi-Hassner)", "body_cnn": "Body CNN (MobileNetV3)", "hybrid": "Hybrid face->body"}
+
+    names = {"face_dnn": "Face DNN (Levi-Hassner)", "body_cnn": "Body CNN (MobileNetV3)",
+             "hybrid": "Hybrid face -> body"}
     results = {}
-    for b in a.algorithms.split(","):
-        clf = build_gender(cfg, b)
-        if clf is None:
-            print(f"skip {b}: model not available")
+    for backend in args.algorithms.split(","):
+        classifier = build_gender(cfg, backend)
+        if classifier is None:
+            print(f"skipping {backend}: model not available")
             continue
-        yt, yp, t_total, n_pred = [], [], 0.0, 0
-        for p, c in items:
-            img = cv2.imread(str(p))
-            t0 = time.perf_counter()
-            pr = clf.predict(img)
-            t_total += time.perf_counter() - t0
-            if pr is None:
-                continue
-            n_pred += 1
-            yt.append(c)
-            yp.append(["male", "female"][int(np.argmax(pr))])
-        m = classification_report(yt, yp, ["male", "female"])
-        m["coverage"] = round(n_pred / max(1, len(items)), 4)
-        m["fps"] = round(len(items) / max(t_total, 1e-9), 1)
-        m["note"] = "metrics on crops where the model produced a prediction; coverage = share of crops"
-        m.pop("per_class", None)
-        results[names.get(b, b)] = m
-    print_table("GENDER", results, ["accuracy", "precision", "recall", "f1", "coverage", "fps"])
-    save_section(cfg, "gender", {"dataset": a.name or root.name, "samples": len(items), "algorithms": results})
+        actual, predicted, total_time = [], [], 0.0
+        for path, label in items:
+            img = cv2.imread(str(path))
+            started = time.perf_counter()
+            probs = classifier.predict(img)
+            total_time += time.perf_counter() - started
+            if probs is None:
+                continue   # e.g. no face found
+            actual.append(label)
+            predicted.append(["male", "female"][int(np.argmax(probs))])
+
+        metrics = classification_report(actual, predicted, ["male", "female"])
+        metrics["coverage"] = round(len(predicted) / max(1, len(items)), 4)
+        metrics["fps"] = round(len(items) / max(total_time, 1e-9), 1)
+        metrics.pop("per_class", None)
+        results[names.get(backend, backend)] = metrics
+
+    print_results("GENDER ESTIMATION", results)
+    save_section(cfg, "gender", {
+        "dataset": args.name or f"{root.name} ({len(items)} person crops)",
+        "samples": len(items),
+        "notes": "Scores are over the crops where the model gave an answer (see coverage in metrics.json)",
+        "algorithms": results,
+    })
 
 
-# ----------------------------------------------------------------------------- activity
-def eval_activity(cfg, a):
+def eval_activity(cfg, args):
     from src.activity.dataset import build_features, load_npz, replay_rule_based, split_indices
     from src.activity.rule_based import RuleBasedActivity
-    d = load_npz(a.data)
-    classes = [str(c) for c in d["classes"]]
-    _, _, te = split_indices(d["groups"], seed=a.seed)
-    if a.all or len(te) == 0:
-        te = np.arange(len(d["labels"]))
-    y = [str(v) for v in d["labels"][te]]
-    print(f"{len(te)} test windows")
+
+    data = load_npz(args.data)
+    classes = [str(c) for c in data["classes"]]
+    _, _, test = split_indices(data["groups"], seed=args.seed)
+    if args.all or len(test) == 0:
+        test = np.arange(len(data["labels"]))
+    actual = [str(v) for v in data["labels"][test]]
+    window = data["times"].shape[1]
+    print(f"{len(test)} test windows")
+
     results = {}
-    for b in a.algorithms.split(","):
-        if b == "rule_based":
+    for backend in args.algorithms.split(","):
+        if backend == "rule_based":
             rules = RuleBasedActivity(cfg)
-            t0 = time.perf_counter()
-            pred = [replay_rule_based(rules, d, i, cfg["activity"].get("smoothing", 7)) for i in te]
-            dt = time.perf_counter() - t0
+            started = time.perf_counter()
+            predicted = [replay_rule_based(rules, data, i, cfg["activity"].get("smoothing", 7)) for i in test]
+            elapsed = time.perf_counter() - started
+            frames = len(test) * window   # the rules look at every frame of every window
             name = "Rule-based (pose geometry + motion)"
         else:
-            path = resolve_path(cfg["activity"][f"{b}_model"])
+            path = resolve_path(cfg["activity"][f"{backend}_model"])
             if not path.exists():
-                print(f"skip {b}: {path} not found (train it with scripts/train_activity.py)")
+                print(f"skipping {backend}: {path} not found (train it with scripts/train_activity.py)")
                 continue
             import torch
             from src.activity.models import build_model
-            ck = torch.load(path, map_location="cpu", weights_only=False)
-            model = build_model(b, len(ck["classes"]))
-            model.load_state_dict(ck["state_dict"])
+
+            checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+            model = build_model(backend, len(checkpoint["classes"]))
+            model.load_state_dict(checkpoint["state_dict"])
             model.eval()
-            X, _ = build_features(d, te)
-            X = ((X - np.asarray(ck["mean"], np.float32)) / np.asarray(ck["std"], np.float32)).astype(np.float32)
-            t0 = time.perf_counter()
+            X, _ = build_features(data, test)
+            X = ((X - np.asarray(checkpoint["mean"], np.float32)) / np.asarray(checkpoint["std"], np.float32))
+            started = time.perf_counter()
             with torch.no_grad():
-                out = model(torch.from_numpy(X)).argmax(1).numpy()
-            dt = time.perf_counter() - t0
-            pred = [ck["classes"][i] for i in out]
-            name = {"lstm": "Bi-LSTM + attention", "tcn": "Temporal ConvNet (TCN)"}[b]
-        m = classification_report(y, pred, classes)
-        m["fps"] = round(len(te) / max(dt, 1e-9), 1)
-        m["latency_ms"] = round(1000 * dt / len(te), 3)
-        results[name] = m
-    print_table("ACTIVITY RECOGNITION", results, ["accuracy", "precision", "recall", "f1", "fps"])
-    save_section(cfg, "activity", {"dataset": a.name or Path(a.data).stem, "samples": len(te), "classes": classes,
-                                   "notes": "per-video test split; macro-averaged precision/recall/F1",
-                                   "algorithms": results})
+                out = model(torch.from_numpy(X.astype(np.float32))).argmax(1).numpy()
+            elapsed = time.perf_counter() - started
+            frames = len(test)   # live, the model runs once per frame on the latest window
+            predicted = [checkpoint["classes"][i] for i in out]
+            name = {"lstm": "Bi-LSTM + attention", "tcn": "Temporal ConvNet (TCN)"}[backend]
+
+        metrics = classification_report(actual, predicted, classes)
+        metrics["fps"] = round(frames / max(elapsed, 1e-9), 1)
+        results[name] = metrics
+
+    print_results("ACTIVITY RECOGNITION", results, classes)
+    save_section(cfg, "activity", {
+        "dataset": args.name or f"{Path(args.data).stem} ({len(test)} test windows)",
+        "samples": len(test),
+        "classes": classes,
+        "notes": "Test videos are kept apart from training videos. Precision, recall and F1 are "
+                 "averaged over the classes",
+        "algorithms": results,
+    })
 
 
-# ----------------------------------------------------------------------------- threat events
-SIM_GT = [  # ground truth of the scripted synthetic scene (src/pipeline/simulator.py), seconds
-    dict(type="restricted_zone_intrusion", start=19.0, end=40.0),
-    dict(type="loitering", start=31.0, end=64.0),
-    dict(type="physical_altercation", start=36.0, end=45.0),
-    dict(type="fall", start=44.0, end=50.0),
-    dict(type="person_down", start=50.0, end=60.5),
-    dict(type="chasing", start=61.0, end=65.0),
-    dict(type="abandoned_object", start=63.0, end=95.0),
-    dict(type="group_gathering", start=75.0, end=88.5),
-    dict(type="panic_running", start=88.0, end=91.0),
-]
-EVAL_TYPES = ["restricted_zone_intrusion", "loitering", "physical_altercation", "fighting", "fall", "person_down",
-              "chasing", "abandoned_object", "group_gathering", "crowd_gathering", "panic_running"]
-
-
-def run_clip(cfg, frames, fps, activity_backend=None, meta_fn=None):
+def run_clip(cfg, frames, fps, activity_backend=None):
     from src.pipeline.processor import Analytics
-    an = Analytics(cfg, activity_backend=activity_backend)
-    an.scene.quiet_override = False
-    an.assessor.quiet_override = False
-    preds = []
-    for i, f in enumerate(frames):
-        _, new = an.process(f, i, i / fps, meta_fn() if meta_fn else None)
-        preds += [dict(type=x.event.type, t=i / fps, level=x.level) for x in new]
-    return preds, an
+
+    analytics = Analytics(cfg, activity_backend=activity_backend)
+    analytics.scene.quiet_override = False     # the clock of the test machine shouldn't matter
+    analytics.assessor.quiet_override = False
+    predictions = []
+    for i, frame in enumerate(frames):
+        _, new = analytics.process(frame, i, i / fps)
+        predictions += [dict(type=a.event.type, t=i / fps, level=a.level) for a in new]
+    return predictions, analytics
 
 
-def eval_threat(cfg, a):
+def clip_frames(path, width):
+    cap = cv2.VideoCapture(str(path))
+    while True:
+        ok, frame = cap.read()
+        if not ok:
+            break
+        yield resize_to(frame, width)
+    cap.release()
+
+
+def eval_threat(cfg, args):
+    annotations = json.loads(Path(args.annotations).read_text())
     results = {}
-    backends = a.algorithms.split(",")
-    for b in backends:
-        c = copy.deepcopy(cfg)
-        preds, gts = [], []
-        if a.simulated:
-            from src.pipeline.simulator import FPS, SimulatedSource
-            c["source"]["uri"] = "simulated"
-            src = SimulatedSource()
+    for backend in args.algorithms.split(","):
+        predictions, truth, name = [], [], None
+        for clip, events in annotations.items():
+            path = Path(args.videos) / clip
+            fps = cv2.VideoCapture(str(path)).get(cv2.CAP_PROP_FPS) or 25.0
+            found, analytics = run_clip(cfg, clip_frames(path, cfg["source"].get("resize_width", 0)), fps, backend)
+            name = f"Scene analyser + {analytics.activity.name}"
+            predictions += [dict(p, clip=clip) for p in found]
+            truth += [dict(e, clip=clip) for e in events]
 
-            def frames():
-                for _ in range(int(a.cycles * 100 * FPS)):
-                    yield src.read()[1]
-            p, an = run_clip(c, frames(), FPS, b, lambda: src.last_meta)
-            name = f"Scene analyser + {an.activity.name}"
-            for k in range(a.cycles):
-                gts += [dict(g, start=g["start"] + 100 * k, end=g["end"] + 100 * k) for g in SIM_GT]
-            preds += p
-            dataset = f"Synthetic self-test scene ({a.cycles} x 100 s) - not real footage"
-        else:
-            ann = json.loads(Path(a.annotations).read_text())
-            name = None
-            for clip, events in ann.items():
-                path = Path(a.videos) / clip
-                cap = cv2.VideoCapture(str(path))
-                fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+        # a one-person "fighting" event and a two-person "physical_altercation" count as the same thing
+        for p in predictions:
+            if p["type"] == "fighting":
+                p["type"] = "physical_altercation"
+        types = sorted({g["type"] for g in truth} | ({p["type"] for p in predictions} & set(EVAL_TYPES)))
+        results[name] = event_metrics([p for p in predictions if p["type"] in types], truth,
+                                      tolerance=args.tolerance, types=types)
 
-                def frames(cap=cap):
-                    while True:
-                        ok, f = cap.read()
-                        if not ok:
-                            break
-                        rw = c["source"].get("resize_width", 0)
-                        yield cv2.resize(f, None, fx=rw / f.shape[1], fy=rw / f.shape[1]) if rw else f
-                p, an = run_clip(c, frames(), fps, b)
-                name = f"Scene analyser + {an.activity.name}"
-                preds += [dict(x, clip=clip) for x in p]
-                gts += [dict(g, clip=clip) for g in events]
-            dataset = a.name or Path(a.videos).name
-        # single-person "fighting" and two-person "physical_altercation" are one violence category
-        preds = [dict(x, type="physical_altercation" if x["type"] == "fighting" else x["type"]) for x in preds]
-        types = sorted({g["type"] for g in gts} | ({x["type"] for x in preds} & set(EVAL_TYPES)))
-        m = event_metrics([x for x in preds if x["type"] in types], gts, tolerance=a.tolerance, types=types)
-        results[name] = m
-        print(f"\n{name}")
-        for ty, v in m["per_type"].items():
-            print(f"  {ty:28s} P {v['precision']:.2f}  R {v['recall']:.2f}  F1 {v['f1']:.2f}  (tp {v['tp']} fp {v['fp']} fn {v['fn']})")
-    print_table("THREAT / SUSPICIOUS EVENT DETECTION", results, ["precision", "recall", "f1"])
-    save_section(cfg, "threat", {"dataset": dataset, "notes": f"event-level matching, +/-{a.tolerance}s tolerance",
-                                 "algorithms": results})
+    print_results("THREAT / SUSPICIOUS EVENT DETECTION", results)
+    save_section(cfg, "threat", {
+        "dataset": args.name or f"{Path(args.videos).name} ({len(annotations)} clips)",
+        "notes": f"An alert counts as correct when it falls within {args.tolerance}s of an annotated event",
+        "algorithms": results,
+    })
 
 
-# ----------------------------------------------------------------------------- speed
-def eval_speed(cfg, a):
+def eval_speed(cfg, args):
     from src.pipeline.processor import Analytics
-    results = {}
-    for conf in a.configs.split(","):
-        det, act = conf.split("+")
-        c = copy.deepcopy(cfg)
-        if a.video == "simulated":
-            from src.pipeline.simulator import FPS, SimulatedSource
-            c["source"]["uri"] = "simulated"
-            src, fps = SimulatedSource(), FPS
-            read = lambda: src.read()[1]
-            meta = lambda: src.last_meta
-        else:
-            c["source"]["uri"] = a.video
-            cap = cv2.VideoCapture(str(resolve_path(a.video)))
-            fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
 
-            def read(cap=cap):
-                ok, f = cap.read()
-                if not ok:
-                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                    ok, f = cap.read()
-                rw = c["source"].get("resize_width", 0)
-                return cv2.resize(f, None, fx=rw / f.shape[1], fy=rw / f.shape[1]) if rw else f
-            meta = lambda: None
-        an = Analytics(c, detector_backend=det, activity_backend=act)
-        times, n_persons = [], []
-        for i in range(a.frames + 10):
-            f = read()
-            t0 = time.perf_counter()
-            an.process(f, i, i / fps, meta())
-            if i >= 10:  # skip warm-up
-                times.append(time.perf_counter() - t0)
-                n_persons.append(len(an.active_tracks))
+    results = {}
+    for setup in args.configs.split(","):
+        detector, activity = setup.split("+")
+        cap = cv2.VideoCapture(str(resolve_path(args.video)))
+        fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+        width = cfg["source"].get("resize_width", 0)
+
+        def read():
+            ok, frame = cap.read()
+            if not ok:   # loop the clip if it is shorter than --frames
+                cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                ok, frame = cap.read()
+            return resize_to(frame, width)
+
+        analytics = Analytics(copy.deepcopy(cfg), detector_backend=detector, activity_backend=activity)
+        times, people = [], []
+        for i in range(args.frames + 10):
+            frame = read()
+            started = time.perf_counter()
+            analytics.process(frame, i, i / fps)
+            if i >= 10:   # the first frames include warm-up
+                times.append(time.perf_counter() - started)
+                people.append(len(analytics.active_tracks))
+        cap.release()
+
         mean = float(np.mean(times))
-        name = f"{an.detector.name} + {an.activity.name}"
-        results[name] = {"fps": round(1 / mean, 2), "latency_ms": round(1000 * mean, 2),
-                         "p95_latency_ms": round(1000 * float(np.percentile(times, 95)), 2),
-                         "realtime_factor": round((1 / mean) / fps, 2), "avg_persons": round(float(np.mean(n_persons)), 1),
-                         "stage_ms": {k: round(v, 2) for k, v in an.timing.items() if k != "render"}}
-    print_table("END-TO-END SPEED", results, ["fps", "latency_ms", "p95_latency_ms", "realtime_factor"])
-    import platform
-    save_section(cfg, "system", {"dataset": a.name or str(a.video), "samples": a.frames,
-                                 "notes": f"{platform.processor() or platform.machine()}, {a.frames} frames, "
-                                          "analytics only (no video encoding)", "algorithms": results})
+        results[f"{analytics.detector.name} + {analytics.activity.name}"] = {
+            "fps": round(1 / mean, 2),
+            "latency_ms": round(1000 * mean, 2),
+            "p95_latency_ms": round(1000 * float(np.percentile(times, 95)), 2),
+            "realtime_factor": round((1 / mean) / fps, 2),
+            "avg_persons": round(float(np.mean(people)), 1),
+            "stage_ms": {k: round(v, 2) for k, v in analytics.timing.items() if k != "render"},
+        }
+
+    print_results("END-TO-END SPEED", results)
+    save_section(cfg, "system", {
+        "dataset": args.name or str(args.video),
+        "samples": args.frames,
+        "notes": f"{platform.processor() or platform.machine()}, {args.frames} frames, analytics only",
+        "algorithms": results,
+    })
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--config", default="config.yaml")
-    sub = ap.add_subparsers(dest="cmd", required=True)
-    s = sub.add_parser("detection")
-    s.add_argument("--images", required=True)
-    s.add_argument("--algorithms", default="yolov8n-pose,yolov8s-pose,hog")
-    s.add_argument("--limit", type=int, default=0)
-    s.add_argument("--name")
-    s = sub.add_parser("gender")
-    s.add_argument("--images", required=True)
-    s.add_argument("--algorithms", default="face_dnn,body_cnn,hybrid")
-    s.add_argument("--limit", type=int, default=0)
-    s.add_argument("--name")
-    s = sub.add_parser("activity")
-    s.add_argument("--data", required=True)
-    s.add_argument("--algorithms", default="rule_based,lstm,tcn")
-    s.add_argument("--seed", type=int, default=42)
-    s.add_argument("--all", action="store_true", help="evaluate on every window, not only the test split")
-    s.add_argument("--name")
-    s = sub.add_parser("threat")
-    s.add_argument("--videos")
-    s.add_argument("--annotations")
-    s.add_argument("--simulated", action="store_true")
-    s.add_argument("--cycles", type=int, default=1)
-    s.add_argument("--algorithms", default="rule_based,lstm,tcn")
-    s.add_argument("--tolerance", type=float, default=2.0)
-    s.add_argument("--name")
-    s = sub.add_parser("speed")
-    s.add_argument("--video", default="simulated")
-    s.add_argument("--configs", default="yolo+rule_based,yolo+lstm,yolo+tcn,hog+rule_based")
-    s.add_argument("--frames", type=int, default=300)
-    s.add_argument("--name")
-    a = ap.parse_args()
-    cfg = load_config(a.config)
-    {"detection": eval_detection, "gender": eval_gender, "activity": eval_activity, "threat": eval_threat,
-     "speed": eval_speed}[a.cmd](cfg, a)
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--config", default="config.yaml")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    p = sub.add_parser("detection")
+    p.add_argument("--images", required=True)
+    p.add_argument("--algorithms", default="yolov8n-pose,yolov8s-pose,hog")
+    p.add_argument("--limit", type=int, default=0)
+    p.add_argument("--name")
+
+    p = sub.add_parser("gender")
+    p.add_argument("--images", required=True)
+    p.add_argument("--algorithms", default="face_dnn,body_cnn,hybrid")
+    p.add_argument("--limit", type=int, default=0)
+    p.add_argument("--name")
+
+    p = sub.add_parser("activity")
+    p.add_argument("--data", required=True)
+    p.add_argument("--algorithms", default="rule_based,lstm,tcn")
+    p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--all", action="store_true", help="evaluate on every window, not only the test split")
+    p.add_argument("--name")
+
+    p = sub.add_parser("threat")
+    p.add_argument("--videos", required=True)
+    p.add_argument("--annotations", required=True)
+    p.add_argument("--algorithms", default="rule_based")
+    p.add_argument("--tolerance", type=float, default=2.0)
+    p.add_argument("--name")
+
+    p = sub.add_parser("speed")
+    p.add_argument("--video", required=True)
+    p.add_argument("--configs", default="yolo+rule_based,hog+rule_based")
+    p.add_argument("--frames", type=int, default=300)
+    p.add_argument("--name")
+
+    args = parser.parse_args()
+    cfg = load_config(args.config)
+    commands = {"detection": eval_detection, "gender": eval_gender, "activity": eval_activity,
+                "threat": eval_threat, "speed": eval_speed}
+    commands[args.cmd](cfg, args)
 
 
 if __name__ == "__main__":
