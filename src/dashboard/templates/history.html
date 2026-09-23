@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Event history{% endblock %}
+{% block content %}
+<div class="topbar">
+  <div><h1>Event history</h1><div class="sub">All threat alerts stored in the event database, with snapshots and score explanations.</div></div>
+  <a class="btn" href="/api/export.csv">⬇ Export CSV</a>
+</div>
+<div class="panel" style="margin-bottom:14px">
+  <div class="filters">
+    <label>Severity<div class="chips" id="lvlChips">
+      {% for l in ["LOW","MEDIUM","HIGH","CRITICAL"] %}<span class="lvl {{l}} chip on" data-l="{{l}}">{{l}}</span>{% endfor %}
+    </div></label>
+    <label>Event type<select id="fType"><option value="">All types</option>
+      {% for t in types %}<option value="{{t}}">{{ t.replace('_',' ') }}</option>{% endfor %}</select></label>
+    <label>From<input type="date" id="fSince"></label>
+    <label>To<input type="date" id="fUntil"></label>
+    <label>Search<input type="search" id="fQ" placeholder="description…"></label>
+    <label>&nbsp;<span><input type="checkbox" id="fUnack"> unacknowledged only</span></label>
+    <button class="btn primary" onclick="load(0)">Apply</button>
+  </div>
+</div>
+<div class="panel">
+  <div class="table-wrap"><table>
+    <thead><tr><th>Snapshot</th><th>Time</th><th>Severity</th><th>Event</th><th class="num">Duration</th><th>Why</th><th></th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table></div>
+  <div style="display:flex;gap:10px;align-items:center;margin-top:12px">
+    <button class="btn" id="prev" onclick="load(offset-PAGE)">← Newer</button>
+    <button class="btn" id="next" onclick="load(offset+PAGE)">Older →</button>
+    <span class="muted" id="pageInfo"></span>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const PAGE = 50; let offset = 0;
+document.querySelectorAll("#lvlChips .chip").forEach(c => c.onclick = () => { c.classList.toggle("on"); load(0); });
+async function load(off) {
+  offset = Math.max(0, off);
+  const lv = [...document.querySelectorAll("#lvlChips .chip.on")].map(c => c.dataset.l).join(",");
+  const p = new URLSearchParams({ level: lv || "NONE", type: fType.value, since: fSince.value, until: fUntil.value,
+    q: fQ.value, unacked: fUnack.checked ? "1" : "", limit: PAGE, offset });
+  const data = await (await fetch("/api/alerts?" + p)).json();
+  rows.innerHTML = data.length ? data.map(a => `<tr>
+    <td>${a.snapshot ? `<img class="thumb" loading="lazy" src="/snapshots/${encodeURIComponent(a.snapshot)}" onclick="TV.showSnapshot('${TV.esc(a.snapshot)}','${TV.esc(a.description)}')">` : ""}</td>
+    <td>${TV.esc(a.time)}<div class="muted">${TV.esc(a.camera)}</div></td>
+    <td><span class="lvl ${a.level}">${a.level} ${Math.round(a.score)}</span></td>
+    <td><b>${TV.esc(a.description)}</b><div class="muted">${TV.esc(TV.fmtType(a.type))}${a.zone ? " · " + TV.esc(a.zone) : ""}</div></td>
+    <td class="num">${a.duration ? a.duration.toFixed(0) + "s" : "–"}</td>
+    <td class="muted" style="max-width:320px">${TV.esc(a.reasons.join(" · "))}</td>
+    <td>${a.acknowledged ? '<span class="pill">acknowledged</span>' : `<button class="btn small" onclick="TV.ack('${a.id}', this)">Acknowledge</button>`}</td></tr>`).join("")
+    : `<tr><td colspan="7"><div class="empty">No events match these filters</div></td></tr>`;
+  prev.disabled = offset === 0; next.disabled = data.length < PAGE;
+  pageInfo.textContent = data.length ? `Showing ${offset + 1}–${offset + data.length}` : "";
+}
+TV.on("alert", () => { if (offset === 0) load(0); });
+load(0);
+</script>
+{% endblock %}

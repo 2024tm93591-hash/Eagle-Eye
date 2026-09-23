@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}ThreatVision{% endblock %} · ThreatVision</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="brand"><div class="logo">◉</div><div>ThreatVision<small>Scene understanding &amp; threat detection</small></div></div>
+    <nav class="nav">
+      <a href="/" class="{{ 'active' if page == 'live' }}">▶ Live monitor</a>
+      <a href="/history" class="{{ 'active' if page == 'history' }}">☰ Event history <span class="badge lvl CRITICAL" id="unackBadge" style="display:none">0</span></a>
+      <a href="/analytics" class="{{ 'active' if page == 'analytics' }}">▤ Analytics</a>
+      <a href="/metrics" class="{{ 'active' if page == 'metrics' }}">◎ Performance metrics</a>
+      <a href="/settings" class="{{ 'active' if page == 'settings' }}">⚙ Sources &amp; settings</a>
+    </nav>
+    <div class="foot"><span class="dot" id="connDot"></span><span id="connText">Connecting…</span><br><span class="muted">{{ camera }}</span></div>
+  </aside>
+  <main>
+    <div class="banner" id="critBanner"><span>⚠</span><span id="critText"></span><button class="btn small" style="margin-left:auto" onclick="TV.dismissBanner()">Dismiss</button></div>
+    {% block content %}{% endblock %}
+  </main>
+</div>
+<div class="toast-box" id="toasts"></div>
+<div class="modal" id="modal" onclick="if(event.target===this)this.classList.remove('show')"><div class="box" id="modalBox"></div></div>
+<script src="{{ url_for('static', filename='js/common.js') }}"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

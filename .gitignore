@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+data/events.db
+data/snapshots/*.jpg
+data/videos/*
+!data/videos/.gitkeep
+data/eval/
+data/activity/
+data/gender/
+models/*.pt
+models/*.caffemodel
+models/*.prototxt

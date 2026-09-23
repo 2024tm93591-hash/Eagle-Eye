@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Live monitor{% endblock %}
+{% block content %}
+<div class="topbar">
+  <div><h1>Live monitor</h1><div class="sub" id="srcLine">Source: …</div></div>
+  <div class="sub" id="modelLine"></div>
+</div>
+<div class="grid live-grid">
+  <div class="grid" style="align-content:start">
+    <div class="panel">
+      <h2>Live feed <span class="pill" id="fpsPill">– FPS</span></h2>
+      <div class="video-wrap"><img src="/video_feed" alt="Live annotated video"></div>
+      <div class="scene-text" id="sceneText">Waiting for the first frame…</div>
+    </div>
+    <div class="panel">
+      <h2>People in view</h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>ID</th><th>Est. gender</th><th>Activity</th><th class="num">Confidence</th><th class="num">Dwell</th><th>Zone</th></tr></thead>
+        <tbody id="personRows"><tr><td colspan="6" class="muted">Nobody in view</td></tr></tbody>
+      </table></div>
+    </div>
+  </div>
+  <div class="grid" style="align-content:start">
+    <div class="panel">
+      <h2>Scene statistics</h2>
+      <div class="grid kpis">
+        <div class="kpi"><div class="v" id="kCount">0</div><div class="l">Persons in view</div></div>
+        <div class="kpi male"><div class="v" id="kMale">0</div><div class="l">Male (est.)</div></div>
+        <div class="kpi female"><div class="v" id="kFemale">0</div><div class="l">Female (est.)</div></div>
+        <div class="kpi unk"><div class="v" id="kUnk">0</div><div class="l">Undetermined</div></div>
+        <div class="kpi"><div class="v" id="kUnique">0</div><div class="l">Unique visitors</div></div>
+        <div class="kpi"><div class="v" id="kLat">–</div><div class="l">Latency (ms)</div></div>
+      </div>
+    </div>
+    <div class="panel"><h2>Activities</h2><div id="actBars"></div></div>
+    <div class="panel">
+      <h2>Threat alerts <a href="/history" class="pill">history →</a></h2>
+      <div class="feed" id="feed"><div class="empty">No alerts yet</div></div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const ACTS = ["standing", "walking", "running", "fighting", "falling"];
+const ACT_COL = { standing: "#8b98a8", walking: "#22c55e", running: "#f5b400", fighting: "#ef4444", falling: "#d946ef" };
+const feed = document.getElementById("feed");
+
+function renderStats(s) {
+  if (!s || s.count === undefined) return;
+  const g = s.genders || {};
+  kCount.textContent = s.count; kMale.textContent = g.male || 0; kFemale.textContent = g.female || 0;
+  kUnk.textContent = g.unknown || 0; kUnique.textContent = s.unique_total; kLat.textContent = s.latency_ms;
+  fpsPill.textContent = `processing ${s.fps} FPS`;
+  sceneText.textContent = s.scene_text || "";
+  srcLine.textContent = `Source: ${s.source} · ${s.camera} · uptime ${Math.round(s.uptime)}s`;
+  modelLine.textContent = s.models ? `Detector: ${s.models.detector} · Gender: ${s.models.gender} · Activity: ${s.models.activity}` : "";
+  TV.hbarChart(actBars, ACTS.map(a => ({ label: a, value: (s.activities || {})[a] || 0, color: ACT_COL[a] })));
+  personRows.innerHTML = (s.persons || []).length ? s.persons.map(p => `<tr>
+    <td>#${p.id}</td><td style="color:var(--${p.gender})">${p.gender}${p.gender !== "unknown" ? ` <span class="muted">${Math.round(p.gender_conf * 100)}%</span>` : ""}</td>
+    <td><span style="color:${ACT_COL[p.activity]}">●</span> ${p.activity}</td><td class="num">${Math.round(p.activity_conf * 100)}%</td>
+    <td class="num">${p.dwell.toFixed(0)}s</td><td>${TV.esc(p.zones.join(", ")) || '<span class="muted">–</span>'}</td></tr>`).join("")
+    : `<tr><td colspan="6" class="muted">Nobody in view</td></tr>`;
+}
+function addAlert(a) {
+  if (feed.querySelector(".empty")) feed.innerHTML = "";
+  feed.insertAdjacentHTML("afterbegin", TV.alertCard(a));
+  while (feed.children.length > 60) feed.lastChild.remove();
+}
+TV.on("stats", renderStats);
+TV.on("alert", addAlert);
+fetch("/api/stats").then(r => r.json()).then(renderStats);
+fetch("/api/alerts?limit=30").then(r => r.json()).then(rows => rows.reverse().forEach(addAlert));
+</script>
+{% endblock %}

@@ -1,0 +1,16 @@
+# Core
+numpy>=1.24
+opencv-python>=4.8,<5   # OpenCV 5 dropped cv2.dnn.readNetFromCaffe (face / gender models)
+scipy>=1.10
+PyYAML>=6.0
+Flask>=3.0
+
+# Deep learning (YOLOv8 detection/pose + ByteTrack, LSTM/TCN, body-gender CNN)
+# For an NVIDIA GPU install the CUDA build of torch first: https://pytorch.org/get-started/locally/
+torch>=2.1
+torchvision>=0.16
+ultralytics>=8.1
+lap>=0.4          # ByteTrack assignment
+
+# Tests
+pytest>=7

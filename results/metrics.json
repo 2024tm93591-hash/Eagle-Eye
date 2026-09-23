@@ -1,0 +1,248 @@
+{
+  "detection": {
+    "dataset": "COCO128 (128 real images, 254 persons)",
+    "samples": 128,
+    "notes": "IoU >= 0.5; P/R/F1 at the operating confidence threshold",
+    "algorithms": {
+      "HOG + linear SVM (Dalal-Triggs)": {
+        "precision": 0.2273,
+        "recall": 0.0394,
+        "f1": 0.0671,
+        "ap50": 0.0269,
+        "count_accuracy": 0.5,
+        "count_mae": 1.875,
+        "tp": 10,
+        "fp": 34,
+        "fn": 244,
+        "images": 128,
+        "gt_persons": 254,
+        "fps": 18.95,
+        "latency_ms": 52.8,
+        "conf_threshold": 0.3
+      }
+    }
+  },
+  "generated_at": "2026-09-23 15:53",
+  "activity": {
+    "dataset": "Synthetic self-test scene (not real footage)",
+    "samples": 1467,
+    "classes": [
+      "standing",
+      "walking",
+      "running",
+      "fighting",
+      "falling"
+    ],
+    "notes": "per-video test split; macro-averaged precision/recall/F1",
+    "algorithms": {
+      "Rule-based (pose geometry + motion)": {
+        "accuracy": 0.8882,
+        "precision": 0.9286,
+        "recall": 0.8373,
+        "f1": 0.8671,
+        "per_class": {
+          "standing": {
+            "precision": 0.8746,
+            "recall": 0.9615,
+            "f1": 0.916,
+            "support": 624
+          },
+          "walking": {
+            "precision": 0.8752,
+            "recall": 0.8548,
+            "f1": 0.8649,
+            "support": 558
+          },
+          "running": {
+            "precision": 1.0,
+            "recall": 0.5161,
+            "f1": 0.6809,
+            "support": 93
+          },
+          "fighting": {
+            "precision": 0.9247,
+            "recall": 0.8958,
+            "f1": 0.9101,
+            "support": 96
+          },
+          "falling": {
+            "precision": 0.9684,
+            "recall": 0.9583,
+            "f1": 0.9634,
+            "support": 96
+          }
+        },
+        "confusion": [
+          [
+            600,
+            21,
+            0,
+            0,
+            3
+          ],
+          [
+            81,
+            477,
+            0,
+            0,
+            0
+          ],
+          [
+            3,
+            39,
+            48,
+            3,
+            0
+          ],
+          [
+            2,
+            8,
+            0,
+            86,
+            0
+          ],
+          [
+            0,
+            0,
+            0,
+            4,
+            92
+          ]
+        ],
+        "labels": [
+          "standing",
+          "walking",
+          "running",
+          "fighting",
+          "falling"
+        ],
+        "samples": 1467,
+        "fps": 49.5,
+        "latency_ms": 20.197
+      }
+    }
+  },
+  "threat": {
+    "dataset": "Synthetic self-test scene (2 x 100 s) - not real footage",
+    "notes": "event-level matching, +/-2.0s tolerance",
+    "algorithms": {
+      "Scene analyser + Rule-based (pose geometry + motion)": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "tp": 18,
+        "fp": 0,
+        "fn": 0,
+        "per_type": {
+          "abandoned_object": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1": 1.0,
+            "tp": 2,
+            "fp": 0,
+            "fn": 0
+          },
+          "chasing": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1": 1.0,
+            "tp": 2,
+            "fp": 0,
+            "fn": 0
+          },
+          "fall": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1": 1.0,
+            "tp": 2,
+            "fp": 0,
+            "fn": 0
+          },
+          "group_gathering": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1": 1.0,
+            "tp": 2,
+            "fp": 0,
+            "fn": 0
+          },
+          "loitering": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1": 1.0,
+            "tp": 2,
+            "fp": 0,
+            "fn": 0
+          },
+          "panic_running": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1": 1.0,
+            "tp": 2,
+            "fp": 0,
+            "fn": 0
+          },
+          "person_down": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1": 1.0,
+            "tp": 2,
+            "fp": 0,
+            "fn": 0
+          },
+          "physical_altercation": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1": 1.0,
+            "tp": 2,
+            "fp": 0,
+            "fn": 0
+          },
+          "restricted_zone_intrusion": {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1": 1.0,
+            "tp": 2,
+            "fp": 0,
+            "fn": 0
+          }
+        }
+      }
+    }
+  },
+  "system": {
+    "dataset": "Synthetic scene 960x540 (CPU, 2 cores)",
+    "samples": 300,
+    "notes": "x86_64, 300 frames, analytics only (no video encoding)",
+    "algorithms": {
+      "Simulated ground truth + Rule-based (pose geometry + motion)": {
+        "fps": 315.89,
+        "latency_ms": 3.17,
+        "p95_latency_ms": 4.99,
+        "realtime_factor": 15.79,
+        "avg_persons": 2.2,
+        "stage_ms": {
+          "detection": 0.04,
+          "gender": 0.0,
+          "activity": 2.44,
+          "scene": 0.55,
+          "threat": 0.0
+        }
+      },
+      "HOG + SVM (baseline) + Rule-based (pose geometry + motion)": {
+        "fps": 20.28,
+        "latency_ms": 49.3,
+        "p95_latency_ms": 62.34,
+        "realtime_factor": 1.01,
+        "avg_persons": 1.5,
+        "stage_ms": {
+          "detection": 48.56,
+          "gender": 0.01,
+          "activity": 0.93,
+          "scene": 0.42,
+          "threat": 0.0
+        }
+      }
+    }
+  }
+}

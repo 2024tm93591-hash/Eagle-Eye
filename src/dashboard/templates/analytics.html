@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Analytics{% endblock %}
+{% block content %}
+<div class="topbar">
+  <div><h1>Analytics</h1><div class="sub">Alert trends and occupancy over time.</div></div>
+  <label class="muted">Window <select id="win" onchange="load()">
+    <option value="1">last hour</option><option value="24" selected>last 24 hours</option><option value="168">last 7 days</option></select></label>
+</div>
+<div class="grid three" style="margin-bottom:14px">
+  <div class="panel"><h2>Alerts by severity</h2><div id="byLevel"></div></div>
+  <div class="panel"><h2>Alerts by type</h2><div id="byType"></div></div>
+  <div class="panel"><h2>Alerts by hour of day</h2><div id="byHour"></div></div>
+</div>
+<div class="panel"><h2>Occupancy &amp; estimated gender over time</h2><div id="occ"></div></div>
+{% endblock %}
+{% block scripts %}
+<script>
+const LCOL = { LOW: "#8b98a8", MEDIUM: "#f5b400", HIGH: "#ff7a1a", CRITICAL: "#ef4444" };
+async function load() {
+  const h = +win.value;
+  const s = await (await fetch(`/api/summary?hours=${h}`)).json();
+  TV.hbarChart(byLevel, TV.LEVELS.map(l => ({ label: l, value: s.by_level[l] || 0, color: LCOL[l] })));
+  TV.hbarChart(byType, Object.entries(s.by_type).map(([k, v], i) => ({ label: TV.fmtType(k), value: v, color: TV.PALETTE[i % 8] })));
+  const hours = [...Array(24).keys()];
+  TV.barChart(byHour, { labels: hours.map(x => x % 3 === 0 ? String(x).padStart(2, "0") : ""), series: [{ name: "alerts", color: "#3b82f6", values: hours.map(x => s.by_hour[x] || 0) }], fmt: v => Math.round(v), height: 200 });
+  const occ = await (await fetch(`/api/occupancy?minutes=${h * 60}`)).json();
+  TV.lineChart(document.getElementById("occ"), { x: occ.map(r => r.ts), series: [
+    { name: "persons", color: "#22d3ee", values: occ.map(r => r.persons) },
+    { name: "male (est.)", color: "#3b82f6", values: occ.map(r => r.male) },
+    { name: "female (est.)", color: "#d946ef", values: occ.map(r => r.female) }] });
+}
+load(); setInterval(load, 15000);
+</script>
+{% endblock %}
