@@ -2,33 +2,82 @@
 {% block title %}Analytics{% endblock %}
 {% block content %}
 <div class="topbar">
-  <div><h1>Analytics</h1><div class="sub">Alert trends and occupancy over time.</div></div>
-  <label class="muted">Window <select id="win" onchange="load()">
-    <option value="1">last hour</option><option value="24" selected>last 24 hours</option><option value="168">last 7 days</option></select></label>
+  <div>
+    <h1>Analytics</h1>
+    <div class="sub">
+      Accuracy, precision, recall, F1 score, confusion matrix and frames per second for each algorithm.
+      {% if evaluated_at %}Test results last updated {{ evaluated_at }}.{% endif %}
+    </div>
+  </div>
 </div>
-<div class="grid three" style="margin-bottom:14px">
-  <div class="panel"><h2>Alerts by severity</h2><div id="byLevel"></div></div>
-  <div class="panel"><h2>Alerts by type</h2><div id="byType"></div></div>
-  <div class="panel"><h2>Alerts by hour of day</h2><div id="byHour"></div></div>
+
+<div class="panel report">
+  <h2>Live speed on the current source</h2>
+  <p class="muted">Measured while the system runs, averaged over the last few frames.
+    "idle" means the stage had nothing to do, e.g. gender and activity when nobody is in view.</p>
+  <pre id="liveSpeed">Waiting for the pipeline…</pre>
 </div>
-<div class="panel"><h2>Occupancy &amp; estimated gender over time</h2><div id="occ"></div></div>
+
+{% for section in sections %}
+<div class="panel report">
+  <h2>{{ section.title }}</h2>
+  {% if section.algorithms %}
+    <p class="muted">
+      Test data: {{ section.dataset or "not recorded" }}.
+      {% if section.notes %}{{ section.notes }}.{% endif %}
+    </p>
+    {% for name, text in section.algorithms %}
+      <h3>{{ name }}</h3>
+      <pre>{{ text }}</pre>
+    {% endfor %}
+  {% else %}
+    <p class="muted">Not evaluated yet. This needs a labelled test set; once you have one, run
+      <code>{{ section.command }}</code> and reload this page.</p>
+  {% endif %}
+</div>
+{% endfor %}
 {% endblock %}
+
 {% block scripts %}
 <script>
-const LCOL = { LOW: "#8b98a8", MEDIUM: "#f5b400", HIGH: "#ff7a1a", CRITICAL: "#ef4444" };
-async function load() {
-  const h = +win.value;
-  const s = await (await fetch(`/api/summary?hours=${h}`)).json();
-  TV.hbarChart(byLevel, TV.LEVELS.map(l => ({ label: l, value: s.by_level[l] || 0, color: LCOL[l] })));
-  TV.hbarChart(byType, Object.entries(s.by_type).map(([k, v], i) => ({ label: TV.fmtType(k), value: v, color: TV.PALETTE[i % 8] })));
-  const hours = [...Array(24).keys()];
-  TV.barChart(byHour, { labels: hours.map(x => x % 3 === 0 ? String(x).padStart(2, "0") : ""), series: [{ name: "alerts", color: "#3b82f6", values: hours.map(x => s.by_hour[x] || 0) }], fmt: v => Math.round(v), height: 200 });
-  const occ = await (await fetch(`/api/occupancy?minutes=${h * 60}`)).json();
-  TV.lineChart(document.getElementById("occ"), { x: occ.map(r => r.ts), series: [
-    { name: "persons", color: "#22d3ee", values: occ.map(r => r.persons) },
-    { name: "male (est.)", color: "#3b82f6", values: occ.map(r => r.male) },
-    { name: "female (est.)", color: "#d946ef", values: occ.map(r => r.female) }] });
+const STAGES = [
+  ["detection", "Person detection", "detector"],
+  ["gender", "Gender estimation", "gender"],
+  ["activity", "Activity recognition", "activity"],
+  ["scene", "Scene analysis", null],
+  ["threat", "Threat assessment", null],
+];
+
+function speedLine(label, algorithm, ms) {
+  let time = "idle", speed = "-";
+  if (ms >= 1) {
+    time = `${ms.toFixed(1)} ms`;
+    speed = `${(1000 / ms).toFixed(1)} fps`;
+  } else if (ms > 0) {
+    time = "< 1 ms";          // too quick to be worth a precise number
+    speed = "> 1000 fps";
+  }
+  return label.padEnd(22) + (algorithm || "").padEnd(40) + time.padStart(10) + speed.padStart(14);
 }
-load(); setInterval(load, 15000);
+
+function renderSpeed(s) {
+  const out = document.getElementById("liveSpeed");
+  if (!s || !s.stage_ms) return;
+  if (!s.feed_on) {
+    out.textContent = "The live feed is off. Turn it on from the Live monitor page to measure speed.";
+    return;
+  }
+  const models = s.models || {};
+  const lines = [
+    "Stage".padEnd(22) + "Algorithm".padEnd(40) + "Time/frame".padStart(10) + "Speed".padStart(14),
+    ...STAGES.map(([key, label, model]) => speedLine(label, model && models[model], s.stage_ms[key])),
+    "",
+    speedLine("Whole pipeline", `source: ${s.source}`, s.fps > 0 ? 1000 / s.fps : 0),
+  ];
+  out.textContent = lines.join("\n");
+}
+
+TV.on("stats", renderSpeed);
+fetch("/api/stats").then(r => r.json()).then(renderSpeed);
 </script>
 {% endblock %}

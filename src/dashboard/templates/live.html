@@ -2,71 +2,150 @@
 {% block title %}Live monitor{% endblock %}
 {% block content %}
 <div class="topbar">
-  <div><h1>Live monitor</h1><div class="sub" id="srcLine">Source: …</div></div>
+  <div>
+    <h1>Live monitor</h1>
+    <div class="sub" id="srcLine">Source: …</div>
+  </div>
   <div class="sub" id="modelLine"></div>
 </div>
+
 <div class="grid live-grid">
   <div class="grid" style="align-content:start">
     <div class="panel">
-      <h2>Live feed <span class="pill" id="fpsPill">– FPS</span></h2>
-      <div class="video-wrap"><img src="/video_feed" alt="Live annotated video"></div>
+      <h2>Live feed
+        <span class="feed-controls">
+          <span class="pill" id="fpsPill">– FPS</span>
+          <button class="btn small" id="feedBtn">Turn feed off</button>
+        </span>
+      </h2>
+      <div class="counts">
+        <div class="count"><span class="v" id="cTotal">0</span>people in the scene</div>
+        <div class="count male"><span class="v" id="cMale">0</span>male</div>
+        <div class="count female"><span class="v" id="cFemale">0</span>female</div>
+        <div class="count unk"><span class="v" id="cUnknown">0</span>not determined yet</div>
+      </div>
+      <div class="video-wrap">
+        <img id="video" src="/video_feed" alt="Live annotated video">
+        <div class="feed-off" id="feedOff">The live feed is turned off</div>
+      </div>
       <div class="scene-text" id="sceneText">Waiting for the first frame…</div>
     </div>
     <div class="panel">
       <h2>People in view</h2>
-      <div class="table-wrap"><table>
-        <thead><tr><th>ID</th><th>Est. gender</th><th>Activity</th><th class="num">Confidence</th><th class="num">Dwell</th><th>Zone</th></tr></thead>
-        <tbody id="personRows"><tr><td colspan="6" class="muted">Nobody in view</td></tr></tbody>
-      </table></div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>ID</th><th>Est. gender</th><th>Activity</th><th class="num">Confidence</th><th class="num">Dwell</th></tr>
+          </thead>
+          <tbody id="personRows"><tr><td colspan="5" class="muted">Nobody in view</td></tr></tbody>
+        </table>
+      </div>
     </div>
   </div>
+
   <div class="grid" style="align-content:start">
     <div class="panel">
       <h2>Scene statistics</h2>
       <div class="grid kpis">
-        <div class="kpi"><div class="v" id="kCount">0</div><div class="l">Persons in view</div></div>
-        <div class="kpi male"><div class="v" id="kMale">0</div><div class="l">Male (est.)</div></div>
-        <div class="kpi female"><div class="v" id="kFemale">0</div><div class="l">Female (est.)</div></div>
-        <div class="kpi unk"><div class="v" id="kUnk">0</div><div class="l">Undetermined</div></div>
         <div class="kpi"><div class="v" id="kUnique">0</div><div class="l">Unique visitors</div></div>
-        <div class="kpi"><div class="v" id="kLat">–</div><div class="l">Latency (ms)</div></div>
+        <div class="kpi"><div class="v" id="kLat">–</div><div class="l">Latency per frame (ms)</div></div>
       </div>
     </div>
     <div class="panel"><h2>Activities</h2><div id="actBars"></div></div>
     <div class="panel">
-      <h2>Threat alerts <a href="/history" class="pill">history →</a></h2>
+      <h2>Threat alerts <a href="/history" class="pill">history</a></h2>
       <div class="feed" id="feed"><div class="empty">No alerts yet</div></div>
     </div>
   </div>
 </div>
 {% endblock %}
+
 {% block scripts %}
 <script>
-const ACTS = ["standing", "walking", "running", "fighting", "falling"];
-const ACT_COL = { standing: "#8b98a8", walking: "#22c55e", running: "#f5b400", fighting: "#ef4444", falling: "#d946ef" };
+const ACTIVITIES = ["standing", "walking", "running", "fighting", "falling"];
+const ACTIVITY_COLORS = {
+  standing: "#8b98a8", walking: "#22c55e", running: "#f5b400", fighting: "#ef4444", falling: "#d946ef",
+};
 const feed = document.getElementById("feed");
+const video = document.getElementById("video");
+const feedBtn = document.getElementById("feedBtn");
+let feedOn = true;
+
+function showFeed(on) {
+  if (on === feedOn) return;
+  feedOn = on;
+  feedBtn.textContent = on ? "Turn feed off" : "Turn feed on";
+  document.getElementById("feedOff").style.display = on ? "none" : "flex";
+  if (on) {
+    video.src = "/video_feed?t=" + Date.now();   // new URL so the browser opens a fresh stream
+  } else {
+    video.removeAttribute("src");                // closes the stream
+  }
+}
+
+feedBtn.addEventListener("click", async () => {
+  feedBtn.disabled = true;
+  try {
+    const res = await fetch("/api/feed", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ on: !feedOn }),
+    });
+    showFeed((await res.json()).on);
+  } finally {
+    feedBtn.disabled = false;
+  }
+});
+
+function personRow(p) {
+  let gender = p.gender;
+  if (p.gender !== "unknown") gender += ` <span class="muted">${Math.round(p.gender_conf * 100)}%</span>`;
+  return `<tr>
+    <td>#${p.id}</td>
+    <td style="color:var(--${p.gender})">${gender}</td>
+    <td><span style="color:${ACTIVITY_COLORS[p.activity]}">●</span> ${p.activity}</td>
+    <td class="num">${Math.round(p.activity_conf * 100)}%</td>
+    <td class="num">${p.dwell.toFixed(0)}s</td>
+  </tr>`;
+}
 
 function renderStats(s) {
   if (!s || s.count === undefined) return;
-  const g = s.genders || {};
-  kCount.textContent = s.count; kMale.textContent = g.male || 0; kFemale.textContent = g.female || 0;
-  kUnk.textContent = g.unknown || 0; kUnique.textContent = s.unique_total; kLat.textContent = s.latency_ms;
-  fpsPill.textContent = `processing ${s.fps} FPS`;
-  sceneText.textContent = s.scene_text || "";
-  srcLine.textContent = `Source: ${s.source} · ${s.camera} · uptime ${Math.round(s.uptime)}s`;
-  modelLine.textContent = s.models ? `Detector: ${s.models.detector} · Gender: ${s.models.gender} · Activity: ${s.models.activity}` : "";
-  TV.hbarChart(actBars, ACTS.map(a => ({ label: a, value: (s.activities || {})[a] || 0, color: ACT_COL[a] })));
-  personRows.innerHTML = (s.persons || []).length ? s.persons.map(p => `<tr>
-    <td>#${p.id}</td><td style="color:var(--${p.gender})">${p.gender}${p.gender !== "unknown" ? ` <span class="muted">${Math.round(p.gender_conf * 100)}%</span>` : ""}</td>
-    <td><span style="color:${ACT_COL[p.activity]}">●</span> ${p.activity}</td><td class="num">${Math.round(p.activity_conf * 100)}%</td>
-    <td class="num">${p.dwell.toFixed(0)}s</td><td>${TV.esc(p.zones.join(", ")) || '<span class="muted">–</span>'}</td></tr>`).join("")
-    : `<tr><td colspan="6" class="muted">Nobody in view</td></tr>`;
+  showFeed(s.feed_on);
+
+  document.getElementById("cTotal").textContent = s.count;
+  document.getElementById("cMale").textContent = s.male;
+  document.getElementById("cFemale").textContent = s.female;
+  document.getElementById("cUnknown").textContent = s.unknown;
+  document.getElementById("kUnique").textContent = s.unique_total;
+  document.getElementById("kLat").textContent = s.feed_on ? s.latency_ms : "–";
+  document.getElementById("fpsPill").textContent = s.feed_on ? `processing ${s.fps} FPS` : "feed off";
+  document.getElementById("sceneText").textContent = s.feed_on
+    ? (s.scene_text || "Nobody in view")
+    : "The feed is off, so nothing is being analysed. Turn it on to start the camera again.";
+  document.getElementById("srcLine").textContent =
+    `Source: ${s.source} · ${s.camera}` + (s.feed_on ? ` · uptime ${s.uptime}s` : "");
+  if (s.models) {
+    document.getElementById("modelLine").textContent =
+      `Detector: ${s.models.detector} · Gender: ${s.models.gender} · Activity: ${s.models.activity}`;
+  }
+
+  const activities = s.activities || {};
+  TV.hbarChart(document.getElementById("actBars"),
+    ACTIVITIES.map(a => ({ label: a, value: activities[a] || 0, color: ACTIVITY_COLORS[a] })));
+
+  const persons = s.persons || [];
+  document.getElementById("personRows").innerHTML = persons.length
+    ? persons.map(personRow).join("")
+    : `<tr><td colspan="5" class="muted">Nobody in view</td></tr>`;
 }
-function addAlert(a) {
+
+function addAlert(alert) {
   if (feed.querySelector(".empty")) feed.innerHTML = "";
-  feed.insertAdjacentHTML("afterbegin", TV.alertCard(a));
+  feed.insertAdjacentHTML("afterbegin", TV.alertCard(alert));
   while (feed.children.length > 60) feed.lastChild.remove();
 }
+
 TV.on("stats", renderStats);
 TV.on("alert", addAlert);
 fetch("/api/stats").then(r => r.json()).then(renderStats);

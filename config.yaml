@@ -1,90 +1,79 @@
-# =====================================================================
-#  ThreatVision - AI-Based Scene Understanding & Threat Detection
-#  Central configuration file. Every module reads its settings from here.
-# =====================================================================
+# ThreatVision settings. Every module reads its configuration from this file.
 
 source:
-  # 0 / 1 = webcam index, a file path (data/videos/x.mp4), an RTSP/HTTP URL,
-  # or "simulated" for the built-in synthetic scene (no camera / models needed).
-  uri: "simulated"
-  loop_video: true          # restart file sources when they end
-  resize_width: 960         # frames are resized to this width before processing (0 = keep)
+  # a webcam number (0, 1, ...), a video file such as data/videos/clip.mp4, or an RTSP/HTTP camera URL
+  uri: "0"
+  loop_video: true          # start video files again when they end
+  resize_width: 960         # frames are scaled to this width before processing (0 = keep the size)
   camera_name: "CAM-01 Main Entrance"
 
 detection:
-  # yolo  : Ultralytics YOLOv8-pose (person boxes + 17 COCO keypoints) + ByteTrack
-  # hog   : OpenCV HOG+SVM people detector + IoU tracker (baseline, no keypoints)
-  # simulated : ground truth from the synthetic scene (for self-testing)
+  # yolo: YOLOv8-pose (person boxes + 17 keypoints) with ByteTrack
+  # hog:  OpenCV HOG + SVM people detector with an IoU tracker (older baseline, no keypoints)
   backend: "yolo"
   yolo_model: "models/yolov8n-pose.pt"
-  object_model: "models/yolov8n.pt"   # used for bag / abandoned-object detection
+  object_model: "models/yolov8n.pt"   # finds bags for the abandoned-object check
   object_every_n_frames: 5
   conf_threshold: 0.40
   iou_threshold: 0.50
   tracker: "bytetrack.yaml"
-  device: ""                # "" = auto, "cpu", "0" (first CUDA GPU)
+  device: ""                # "" picks automatically, or "cpu", or "0" for the first CUDA GPU
   imgsz: 640
 
 gender:
-  # face_dnn : OpenCV DNN face detector + Levi-Hassner gender CaffeNet (face must be visible)
-  # body_cnn : MobileNetV3 trained on full-body crops (scripts/train_gender.py) - works on CCTV
-  # hybrid   : face_dnn when a face is found, otherwise body_cnn
-  # none     : disable gender estimation
+  # face_dnn: OpenCV face detector + Levi-Hassner gender CaffeNet (needs a visible face)
+  # body_cnn: MobileNetV3 trained on full-body crops (scripts/train_gender.py), better for CCTV
+  # hybrid:   face_dnn when a face is found, otherwise body_cnn
+  # none:     no gender estimation
   backend: "hybrid"
   face_proto: "models/face_deploy.prototxt"
   face_model: "models/res10_300x300_ssd_iter_140000.caffemodel"
   gender_proto: "models/gender_deploy.prototxt"
   gender_model: "models/gender_net.caffemodel"
   body_model: "models/gender_body_mobilenetv3.pt"
-  every_n_frames: 3         # classify each track every N frames, votes are accumulated
-  min_votes: 3              # votes required before a label is shown
-  min_confidence: 0.60      # accumulated confidence required (else "unknown")
+  every_n_frames: 3         # classify each person every N frames and add up the votes
+  min_votes: 3              # votes needed before a label is shown
+  min_confidence: 0.60      # below this the person stays "unknown"
 
 activity:
-  # rule_based : interpretable heuristics on motion + pose geometry (no training needed)
-  # lstm       : 2-layer bi-LSTM over pose sequences   (scripts/train_activity.py)
-  # tcn        : temporal convolutional network over pose sequences
+  # rule_based: hand-written rules on motion and pose (no training needed)
+  # lstm:       2-layer bidirectional LSTM over pose sequences (scripts/train_activity.py)
+  # tcn:        temporal convolutional network over pose sequences
   backend: "rule_based"
   classes: ["standing", "walking", "running", "fighting", "falling"]
-  window: 30                # frames per sequence given to the learned models
+  window: 30                # frames per sequence for the learned models
   lstm_model: "models/activity_lstm.pt"
   tcn_model: "models/activity_tcn.pt"
-  smoothing: 7              # majority vote over the last N predictions per track
-  rules:                    # thresholds are in body-heights per second (scale invariant)
+  smoothing: 7              # majority vote over the last N predictions for each person
+  rules:                    # speeds are in body heights per second, so camera distance doesn't matter
     walk_speed: 0.25
     run_speed: 1.10
-    fall_torso_angle: 55    # degrees from vertical
-    fall_drop_speed: 0.90   # downward hip speed that marks a fall in progress
-    fall_aspect_ratio: 1.15 # bbox width/height above this = lying
-    fight_limb_speed: 2.60  # wrist speed relative to body centre
-    fight_distance: 1.10    # max centre distance (in body heights) to the opponent
+    fall_torso_angle: 55    # degrees away from upright
+    fall_drop_speed: 0.90   # how fast the hips must drop to count as a fall
+    fall_aspect_ratio: 1.15 # a box wider than this (width / height) means lying down
+    fight_limb_speed: 2.60  # wrist speed relative to the body centre
+    fight_distance: 1.10    # how close (in body heights) the other person must be
 
 scene:
-  zones:                    # polygons in normalised [0..1] image coordinates
-    - name: "Restricted Area"
-      type: "restricted"
-      sensitivity: 1.0
-      polygon: [[0.72, 0.36], [0.98, 0.36], [0.98, 0.58], [0.72, 0.58]]
   loiter_seconds: 25
-  loiter_radius: 3.0        # max spread (body heights) of positions while loitering
-  crowd_threshold: 8        # people in scene
-  cluster_distance: 1.2     # body heights, used to find groups
-  group_size: 4             # people in one tight cluster = gathering
-  group_running: 3          # people running at the same time = panic / stampede
-  person_down_seconds: 6    # still lying after a fall for this long = critical
+  loiter_radius: 3.0        # body heights; staying within this area counts as loitering
+  crowd_threshold: 8        # people in view
+  cluster_distance: 1.2     # body heights between people in the same group
+  group_size: 4             # this many people close together is a gathering
+  group_running: 3          # this many people running at once suggests panic
+  person_down_seconds: 6    # still on the ground this long after a fall = critical
   abandoned_seconds: 15
-  abandoned_radius: 2.0     # body heights: no owner within this radius
+  abandoned_radius: 2.0     # body heights; nobody this close means the bag is unattended
   chase_min_seconds: 1.5
-  min_fight_seconds: 0.6    # violent motion must persist this long before an altercation is reported
-  quiet_hours: ["22:00", "06:00"]   # presence at these times raises severity
+  min_fight_seconds: 0.6    # violent motion has to last this long before it's reported
+  quiet_hours: ["22:00", "06:00"]   # anyone present at these times raises the score
 
 threat:
-  base_scores:              # 0..100
+  base_scores:              # 0 to 100
     fighting: 75
     physical_altercation: 80
     fall: 55
     person_down: 85
-    restricted_zone_intrusion: 60
     loitering: 35
     crowd_gathering: 30
     group_gathering: 35
@@ -93,14 +82,14 @@ threat:
     chasing: 65
     abandoned_object: 65
     after_hours_presence: 40
-  levels:                   # score thresholds (lower bound)
+  levels:                   # lowest score for each level
     LOW: 0
     MEDIUM: 35
     HIGH: 60
     CRITICAL: 80
-  min_alert_level: "MEDIUM" # LOW-scored events are shown on the video overlay but not raised as alerts
-  cooldown_seconds: 20      # same event on same people is not re-alerted within this window
-  escalation_step: 10       # ...unless its score rose by at least this much
+  min_alert_level: "MEDIUM" # LOW events only appear on the video, they aren't raised as alerts
+  cooldown_seconds: 20      # the same event for the same people isn't raised again within this time
+  escalation_step: 10       # ...unless its score went up by at least this much
 
 alerts:
   snapshot_dir: "data/snapshots"
@@ -112,9 +101,9 @@ alerts:
     smtp_host: "smtp.gmail.com"
     smtp_port: 587
     username: ""
-    password_env: "THREATVISION_SMTP_PASSWORD"   # password is read from this env variable
+    password_env: "THREATVISION_SMTP_PASSWORD"   # the password is read from this environment variable
     to: []
-  webhook:                  # generic JSON POST (Slack / Teams / custom SOC endpoint)
+  webhook:                  # a JSON POST, e.g. to Slack, Teams or your own endpoint
     enabled: false
     min_level: "HIGH"
     url: ""
