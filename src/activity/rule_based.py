@@ -12,6 +12,19 @@ from .features import KP_CONF, torso_angle
 WRISTS = (9, 10)
 ANKLES = (15, 16)
 HIPS = [11, 12]
+LEGS = [13, 14, 15, 16]   # knees and ankles
+
+
+def whole_body_visible(keypoints) -> bool:
+    """True when the hips and at least one knee or ankle can be seen.
+
+    Someone cut off at the waist (sitting at a desk, standing close to the camera) has a
+    short, wide box that looks like a person lying down, so we only judge falls when the
+    lower body is in view.
+    """
+    hips = (keypoints[HIPS, 2] >= KP_CONF).any()
+    legs = (keypoints[LEGS, 2] >= KP_CONF).any()
+    return bool(hips and legs)
 
 
 class RuleBasedActivity:
@@ -21,9 +34,13 @@ class RuleBasedActivity:
         self.rules = cfg["activity"]["rules"]
 
     @staticmethod
-    def _joint_speed(track, body_h: float, joints, seconds: float = 0.6) -> float:
-        """How fast the given joints move relative to the hips (75th percentile, body heights/s)."""
-        recent = [h for h in track.history if h[2] is not None][-int(seconds * 30):]
+    def _joint_speed(track, body_h: float, joints, seconds: float = 1.8) -> float:
+        """How fast the given joints move relative to the hips (75th percentile, body heights/s).
+
+        Looks back by time, not by frames, so the answer doesn't depend on the processing speed.
+        """
+        latest = track.history[-1][0]
+        recent = [h for h in track.history if h[2] is not None and h[0] >= latest - seconds]
         if len(recent) < 4:
             return 0.0
 
@@ -54,6 +71,15 @@ class RuleBasedActivity:
         acceleration = np.linalg.norm(np.diff(velocity, axis=0), axis=1)
         return float(acceleration.mean() / body_h / 10.0)
 
+    def _is_lying(self, det, angle, aspect) -> bool:
+        if det.keypoints is None:
+            # the HOG detector gives no pose, so the box shape is all we have
+            return aspect > self.rules["fall_aspect_ratio"]
+        if not whole_body_visible(det.keypoints):
+            return False
+        # with a pose, the torso decides: a seated person is upright however wide their box is
+        return angle is not None and angle > self.rules["fall_torso_angle"]
+
     def predict(self, track, t: float) -> tuple[str, float, dict]:
         """Returns (label, confidence, the measurements the decision was based on)."""
         rules = self.rules
@@ -63,7 +89,8 @@ class RuleBasedActivity:
         drop = float(track.speed(0.4)[1] / body_h)   # positive when moving down
         aspect = det.width / det.height
         angle = torso_angle(det.keypoints)
-        lying = (angle is not None and angle > rules["fall_torso_angle"]) or aspect > rules["fall_aspect_ratio"]
+        lying = self._is_lying(det, angle, aspect)
+        can_judge_fall = det.keypoints is None or whole_body_visible(det.keypoints)
         info = dict(speed=round(speed, 2), drop=round(drop, 2), aspect=round(aspect, 2),
                     torso=None if angle is None else round(angle, 1))
 
@@ -72,7 +99,7 @@ class RuleBasedActivity:
             if track.fall_time is None:
                 track.fall_time = t   # remember when they went down
             return "falling", 0.9 if drop > rules["fall_drop_speed"] else 0.75, info
-        if drop > rules["fall_drop_speed"] * 1.5 and det.height < 0.75 * body_h:
+        if can_judge_fall and drop > rules["fall_drop_speed"] * 1.5 and det.height < 0.75 * body_h:
             return "falling", 0.6, info
         track.fall_time = None
 

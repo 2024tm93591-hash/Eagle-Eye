@@ -1,4 +1,4 @@
-# ThreatVision settings. Every module reads its configuration from this file.
+# Eagle Eye settings. Every module reads its configuration from this file.
 
 source:
   # a webcam number (0, 1, ...), a video file such as data/videos/clip.mp4, or an RTSP/HTTP camera URL
@@ -39,20 +39,22 @@ activity:
   # rule_based: hand-written rules on motion and pose (no training needed)
   # lstm:       2-layer bidirectional LSTM over pose sequences (scripts/train_activity.py)
   # tcn:        temporal convolutional network over pose sequences
-  backend: "rule_based"
+  backend: "tcn"
   classes: ["standing", "walking", "running", "fighting", "falling"]
-  window: 30                # frames per sequence for the learned models
+  fight_min_confidence: 0.70  # lstm / tcn only: a less certain "fighting" uses the model's next guess
+  window: 30                # samples per sequence for the learned models
+  sequence_fps: 10          # samples per second, so a sequence covers window / sequence_fps = 3 s
   lstm_model: "models/activity_lstm.pt"
   tcn_model: "models/activity_tcn.pt"
   smoothing: 7              # majority vote over the last N predictions for each person
   rules:                    # speeds are in body heights per second, so camera distance doesn't matter
-    walk_speed: 0.25
-    run_speed: 1.10
+    walk_speed: 0.2
+    run_speed: 0.7
     fall_torso_angle: 55    # degrees away from upright
     fall_drop_speed: 0.90   # how fast the hips must drop to count as a fall
     fall_aspect_ratio: 1.15 # a box wider than this (width / height) means lying down
-    fight_limb_speed: 2.60  # wrist speed relative to the body centre
-    fight_distance: 1.10    # how close (in body heights) the other person must be
+    fight_limb_speed: 0.90  # wrist speed relative to the body centre
+    fight_distance: 0.8    # how close (in body heights) the other person must be
 
 scene:
   loiter_seconds: 25
@@ -65,7 +67,7 @@ scene:
   abandoned_seconds: 15
   abandoned_radius: 2.0     # body heights; nobody this close means the bag is unattended
   chase_min_seconds: 1.5
-  min_fight_seconds: 0.6    # violent motion has to last this long before it's reported
+  min_fight_seconds: 2.0    # violent motion has to last this long before it's reported
   quiet_hours: ["22:00", "06:00"]   # anyone present at these times raises the score
 
 threat:
@@ -101,7 +103,7 @@ alerts:
     smtp_host: "smtp.gmail.com"
     smtp_port: 587
     username: ""
-    password_env: "THREATVISION_SMTP_PASSWORD"   # the password is read from this environment variable
+    password_env: "EAGLE_EYE_SMTP_PASSWORD"   # the password is read from this environment variable
     to: []
   webhook:                  # a JSON POST, e.g. to Slack, Teams or your own endpoint
     enabled: false
@@ -110,7 +112,7 @@ alerts:
   telegram:
     enabled: false
     min_level: "HIGH"
-    bot_token_env: "THREATVISION_TELEGRAM_TOKEN"
+    bot_token_env: "EAGLE_EYE_TELEGRAM_TOKEN"
     chat_id: ""
 
 dashboard:

@@ -12,6 +12,16 @@ from .rule_based import RuleBasedActivity
 log = logging.getLogger(__name__)
 
 
+def pick_label(probs, classes, fight_confidence: float = 0.0) -> tuple[str, float]:
+    """The most likely class, except that an unsure "fighting" gives way to the next guess.
+    A fight raises a serious alert, so it needs more evidence than the other classes."""
+    ranked = np.argsort(-probs)
+    best = ranked[0]
+    if classes[best] == "fighting" and probs[best] < fight_confidence:
+        best = ranked[1]
+    return classes[best], float(probs[best])
+
+
 class LearnedActivity:
     """Wraps a trained LSTM / TCN checkpoint produced by scripts/train_activity.py."""
 
@@ -24,18 +34,20 @@ class LearnedActivity:
         ckpt = torch.load(path, map_location="cpu", weights_only=False)
         self.classes = ckpt["classes"]
         self.window = ckpt.get("window", cfg["activity"]["window"])
+        self.fps = ckpt.get("fps") or cfg["activity"]["sequence_fps"]
         self.mean = np.asarray(ckpt["mean"], np.float32)
         self.std = np.asarray(ckpt["std"], np.float32)
+        self.fight_confidence = cfg["activity"].get("fight_min_confidence", 0.0)
         self.model = build_model(kind, len(self.classes))
         self.model.load_state_dict(ckpt["state_dict"])
         self.model.eval()
         self.name = {"lstm": "Bi-LSTM + attention (pose sequence)", "tcn": "TCN (pose sequence)"}[kind]
 
     def predict_batch(self, tracks) -> list[tuple[str, float]]:
-        x = np.stack([(track_features(tr, self.window) - self.mean) / self.std for tr in tracks])
+        x = np.stack([(track_features(tr, self.window, self.fps) - self.mean) / self.std for tr in tracks])
         with self.torch.no_grad():
             p = self.torch.softmax(self.model(self.torch.from_numpy(x.astype(np.float32))), 1).numpy()
-        return [(self.classes[i], float(p[j, i])) for j, i in enumerate(p.argmax(1))]
+        return [pick_label(probs, self.classes, self.fight_confidence) for probs in p]
 
 
 class ActivityRecognizer:

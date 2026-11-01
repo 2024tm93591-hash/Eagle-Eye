@@ -24,7 +24,7 @@ from ..threat.assessment import ThreatAssessor
 from ..tracking.track_state import TrackManager
 from .draw import annotate
 
-log = logging.getLogger("threatvision.pipeline")
+log = logging.getLogger("eagleeye.pipeline")
 
 STAGES = ["detection", "gender", "activity", "scene", "threat", "render"]
 STREAM_PREFIXES = ("rtsp://", "http://", "https://")

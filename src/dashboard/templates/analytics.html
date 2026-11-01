@@ -77,7 +77,7 @@ function renderSpeed(s) {
   out.textContent = lines.join("\n");
 }
 
-TV.on("stats", renderSpeed);
+EE.on("stats", renderSpeed);
 fetch("/api/stats").then(r => r.json()).then(renderSpeed);
 </script>
 {% endblock %}

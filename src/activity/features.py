@@ -77,16 +77,26 @@ def sequence_features(times, bboxes, kps_list, nbr_dist=None, ref_h: float | Non
     return feats.astype(np.float32)
 
 
-def pad_window(feats: np.ndarray, window: int) -> np.ndarray:
-    """Take the last `window` frames, left-padding by repeating the first frame."""
-    if len(feats) >= window:
-        return feats[-window:]
-    pad = np.repeat(feats[:1], window - len(feats), axis=0)
-    return np.concatenate([pad, feats], 0)
+def sample_by_time(times, window: int, fps: float) -> np.ndarray:
+    """Indices of `window` frames spaced 1/fps seconds apart, ending at the latest frame.
+
+    Training clips are usually 25-30 fps while the live pipeline may only manage ~10 fps
+    on a CPU, so "the last 30 frames" would cover very different lengths of time. Picking
+    frames by timestamp makes a sequence always cover the same span. When the history is
+    shorter than the span, the earliest frame is repeated.
+    """
+    times = np.asarray(times, dtype=float)
+    targets = times[-1] - (window - 1 - np.arange(window)) / fps
+    idx = np.searchsorted(times, targets + 1e-6, side="right") - 1
+    return np.clip(idx, 0, len(times) - 1)
 
 
-def track_features(track, window: int) -> np.ndarray:
-    hist = list(track.history)[-window:]
+def track_features(track, window: int, fps: float) -> np.ndarray:
+    hist = list(track.history)
     nbr = list(track.nbr_dist)[-len(hist):]
-    return pad_window(sequence_features([h[0] for h in hist], [h[1] for h in hist],
-                                        [h[2] for h in hist], nbr, track.body_height()), window)
+    if len(nbr) < len(hist):
+        nbr = [nbr[0] if nbr else 5.0] * (len(hist) - len(nbr)) + nbr
+    idx = sample_by_time([h[0] for h in hist], window, fps)
+    # keep the real timestamps: repeated frames get zero velocity, like a padded start
+    return sequence_features([hist[i][0] for i in idx], [hist[i][1] for i in idx],
+                             [hist[i][2] for i in idx], [nbr[i] for i in idx], track.body_height())

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Start ThreatVision: the video analytics pipeline and the monitoring dashboard.
+"""Start Eagle Eye: the video analytics pipeline and the monitoring dashboard.
 
 Examples
   python run.py                                   # settings from config.yaml (webcam 0 by default)
@@ -47,7 +47,7 @@ def main():
     cfg = load_config(args.config, overrides)
     app = create_app(cfg)
     dashboard = cfg["dashboard"]
-    print(f"\n  ThreatVision dashboard -> http://localhost:{dashboard['port']}\n")
+    print(f"\n  Eagle Eye dashboard -> http://localhost:{dashboard['port']}\n")
     app.run(host=dashboard["host"], port=dashboard["port"], threaded=True, debug=False, use_reloader=False)
 
 

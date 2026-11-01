@@ -131,7 +131,7 @@ function renderStats(s) {
   }
 
   const activities = s.activities || {};
-  TV.hbarChart(document.getElementById("actBars"),
+  EE.hbarChart(document.getElementById("actBars"),
     ACTIVITIES.map(a => ({ label: a, value: activities[a] || 0, color: ACTIVITY_COLORS[a] })));
 
   const persons = s.persons || [];
@@ -142,12 +142,12 @@ function renderStats(s) {
 
 function addAlert(alert) {
   if (feed.querySelector(".empty")) feed.innerHTML = "";
-  feed.insertAdjacentHTML("afterbegin", TV.alertCard(alert));
+  feed.insertAdjacentHTML("afterbegin", EE.alertCard(alert));
   while (feed.children.length > 60) feed.lastChild.remove();
 }
 
-TV.on("stats", renderStats);
-TV.on("alert", addAlert);
+EE.on("stats", renderStats);
+EE.on("alert", addAlert);
 fetch("/api/stats").then(r => r.json()).then(renderStats);
 fetch("/api/alerts?limit=30").then(r => r.json()).then(rows => rows.reverse().forEach(addAlert));
 </script>

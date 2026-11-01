@@ -3,15 +3,15 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}ThreatVision{% endblock %} · ThreatVision</title>
+  <title>{% block title %}Eagle Eye{% endblock %} · Eagle Eye</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
 <div class="layout">
   <aside class="sidebar">
     <div class="brand">
-      <div class="logo">TV</div>
-      <div>ThreatVision<small>Scene understanding &amp; threat detection</small></div>
+      <div class="logo">EE</div>
+      <div>Eagle Eye<small>Scene understanding &amp; threat detection</small></div>
     </div>
     <nav class="nav">
       <a href="/" class="{{ 'active' if page == 'live' }}">Live monitor</a>
@@ -28,7 +28,7 @@
   <main>
     <div class="banner" id="critBanner">
       <span id="critText"></span>
-      <button class="btn small" style="margin-left:auto" onclick="TV.dismissBanner()">Dismiss</button>
+      <button class="btn small" style="margin-left:auto" onclick="EE.dismissBanner()">Dismiss</button>
     </div>
     {% block content %}{% endblock %}
   </main>

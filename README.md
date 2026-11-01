@@ -1,6 +1,6 @@
-# ThreatVision: AI-Based Scene Understanding and Threat Detection Using Video Analytics
+# Eagle Eye: AI-Based Scene Understanding and Threat Detection Using Video Analytics
 
-ThreatVision watches a camera or a video file in real time and:
+Eagle Eye watches a camera or a video file in real time and:
 
 1. **Counts people and estimates their gender.** YOLOv8-pose finds people and ByteTrack follows them from frame to frame. Gender comes from a face DNN or a body CNN, with votes added up per person. The number of people, men and women is shown above the video and on the video itself.
 2. **Recognises activities:** *standing, walking, running, fighting, falling*, from the body skeleton. There is a rule-based classifier, plus a Bi-LSTM with attention and a Temporal ConvNet you can train.
@@ -33,7 +33,8 @@ python run.py                                    # webcam 0 (the default in conf
 python run.py --source 1                         # another webcam
 python run.py --source data/videos/clip.mp4      # a video file
 python run.py --source rtsp://user:pw@ip/stream  # an IP camera
-python run.py --activity lstm                    # use the trained Bi-LSTM (see section 4)
+python run.py --activity lstm                    # use the trained Bi-LSTM instead of the TCN (see section 4)
+python run.py --activity rule_based              # use the rules, which need no trained model
 ```
 
 Open **http://localhost:5000**. The pages are *Live monitor*, *Event history*, *Analytics* and *Sources & settings*.
@@ -78,12 +79,24 @@ docs/                        project report
 `standing, walking, running, fighting, falling`, or label frames in a CSV file.
 Good public sources: *Le2i Fall* and *UR Fall Detection* (falling); *RWF-2000*, *Hockey Fight* and *Surveillance Camera Fight* (fighting);
 *KTH*, *UCF-101* or your own CCTV footage (walking, running, standing).
+You can record your own clips straight into those folders with the webcam (a countdown gives you time to get into place):
+```bash
+python scripts/record_clips.py --label walking --count 10
+```
+Then build the dataset and train:
 ```bash
 python scripts/extract_pose_dataset.py --videos data/activity_videos --out data/activity/dataset.npz
 python scripts/train_activity.py --data data/activity/dataset.npz --model lstm
 python scripts/train_activity.py --data data/activity/dataset.npz --model tcn
 ```
 The data is split by video, so no clip ends up in both the training and the test set.
+Each sample is 30 poses taken 10 times a second (3 seconds of movement, set by `activity.window` and
+`activity.sequence_fps`). The live system samples the same way, so a model trained on 30 fps clips
+still sees the same thing on a webcam that is processed at 10 fps.
+
+The trained TCN is the default (`activity.backend`). If its checkpoint is missing, the rules are used instead.
+Because a fight raises a serious alert, the model needs 70% confidence to call someone "fighting"
+(`activity.fight_min_confidence`), and it has to last 2 seconds before an alert is raised (`scene.min_fight_seconds`).
 
 **Gender (body CNN).** CCTV faces are often too small to use, so a full-body classifier is trained on PA-100K or PETA:
 ```bash

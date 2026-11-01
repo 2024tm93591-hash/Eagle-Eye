@@ -13,8 +13,13 @@ video. CSV columns: video,start_frame,end_frame,label[,track_id]
 Useful public data: Le2i / UR Fall Detection (falling), RWF-2000, Hockey Fight and Surveillance
 Camera Fight (fighting), KTH, UCF-101 or your own CCTV footage (walking, running, standing).
 
-Every person is tracked with YOLOv8-pose + ByteTrack. Windows of --window frames are cut every
---stride frames and get the label that covers the window's last frame.
+Every person is tracked with YOLOv8-pose + ByteTrack. Each sample is --window poses taken
+--fps times a second (the same way the live system samples them, whatever the clip's frame
+rate), cut every --stride seconds, and labelled with the label that covers its last frame.
+
+With folder labels, samples are only kept for people who really show the activity, so
+bystanders in a falling clip aren't labelled "falling" (src/activity/clip_filter.py).
+Use --no-filter to keep everyone. Frame-level CSV labels are used as they are.
 """
 from __future__ import annotations
 
@@ -28,12 +33,16 @@ import cv2
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from src.activity.clip_filter import frames_showing_activity, stitch_tracks  # noqa: E402
+from src.activity.features import sample_by_time  # noqa: E402
 from src.activity.recognizer import ActivityRecognizer  # noqa: E402
 from src.config import load_config  # noqa: E402
 from src.detection.detector import build_detector  # noqa: E402
 from src.tracking.track_state import TrackManager  # noqa: E402
 
 VIDEO_EXT = {".mp4", ".avi", ".mov", ".mkv", ".mpg", ".webm"}
+MIN_HISTORY_SECONDS = 0.5   # the live system also starts predicting before it has a full sequence
+MAX_GAP_SECONDS = 0.6       # a longer gap in a track splits it into separate runs
 
 
 def load_annotations(path):
@@ -62,11 +71,11 @@ def track_video(frames, detector, fps):
     return records
 
 
-def split_runs(records, max_gap=3):
-    """Split a track into stretches without gaps (a track can be lost for a few frames)."""
+def split_runs(records):
+    """Split a track wherever the person was lost for too long."""
     runs, current = [], records[:1]
     for prev, rec in zip(records, records[1:]):
-        if rec[0] - prev[0] > max_gap:
+        if rec[1] - prev[1] > MAX_GAP_SECONDS:
             runs.append(current)
             current = []
         current.append(rec)
@@ -75,15 +84,20 @@ def split_runs(records, max_gap=3):
     return runs
 
 
-def windows_from_tracks(records, label_for, window, stride, group):
+def windows_from_tracks(records, label_for, window, fps, stride_seconds, group):
     samples = []
     for track_id, recs in records.items():
         for run in split_runs(recs):
-            for end in range(window, len(run) + 1, stride):
-                chunk = run[end - window:end]
-                label = label_for(chunk[-1][0], track_id)
+            times = [r[1] for r in run]
+            next_end = times[0] + MIN_HISTORY_SECONDS
+            for end, t in enumerate(times):
+                if t < next_end:
+                    continue
+                next_end = t + stride_seconds
+                label = label_for(run[end][0], track_id)
                 if label is None:
                     continue
+                chunk = [run[i] for i in sample_by_time(times[:end + 1], window, fps)]
                 samples.append(dict(times=[r[1] for r in chunk], bboxes=[r[2] for r in chunk],
                                     kps=[r[3] for r in chunk], nbr=[r[4] for r in chunk],
                                     refh=chunk[-1][5], label=label, group=group))
@@ -105,23 +119,28 @@ def main():
     parser.add_argument("--videos", required=True, help="folder with class sub-folders or raw clips")
     parser.add_argument("--annotations", help="CSV with frame-level labels")
     parser.add_argument("--out", required=True)
-    parser.add_argument("--window", type=int, default=30)
-    parser.add_argument("--stride", type=int, default=10)
+    parser.add_argument("--window", type=int, help="poses per sample (default: activity.window)")
+    parser.add_argument("--fps", type=float, help="poses per second (default: activity.sequence_fps)")
+    parser.add_argument("--stride", type=float, default=0.25, help="seconds between samples")
+    parser.add_argument("--no-filter", action="store_true", help="label everyone in a clip with its folder name")
     parser.add_argument("--config", default="config.yaml")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
     classes = cfg["activity"]["classes"]
+    window = args.window or cfg["activity"]["window"]
+    sample_fps = args.fps or cfg["activity"]["sequence_fps"]
     detector = build_detector(cfg)
     annotations = load_annotations(args.annotations) if args.annotations else None
     videos = [p for p in sorted(Path(args.videos).rglob("*")) if p.suffix.lower() in VIDEO_EXT]
     print(f"{len(videos)} videos found")
 
     samples = []
+    empty_clips = []
     for n, video in enumerate(videos, 1):
-        fps = cv2.VideoCapture(str(video)).get(cv2.CAP_PROP_FPS) or 25.0
+        clip_fps = cv2.VideoCapture(str(video)).get(cv2.CAP_PROP_FPS) or 25.0
         detector.reset()   # fresh track ids for every clip
-        records = track_video(video_frames(video), detector, fps)
+        records = track_video(video_frames(video), detector, clip_fps)
 
         if annotations is not None:
             spans = annotations.get(video.name, [])
@@ -133,11 +152,19 @@ def main():
                 return None
         else:
             folder = video.parent.name
-            def label_for(frame_idx, track_id, folder=folder):
-                return folder if folder in classes else None
+            rules = cfg["activity"]["rules"]
+            records = stitch_tracks(records)
+            keep = None if args.no_filter else frames_showing_activity(folder, records, rules)
 
-        new = windows_from_tracks(records, label_for, args.window, args.stride, video.stem)
+            def label_for(frame_idx, track_id, folder=folder, keep=keep):
+                if folder not in classes or (keep is not None and frame_idx not in keep[track_id]):
+                    return None
+                return folder
+
+        new = windows_from_tracks(records, label_for, window, sample_fps, args.stride, video.stem)
         samples += new
+        if not new:
+            empty_clips.append(str(video.relative_to(args.videos)))
         print(f"[{n}/{len(videos)}] {video.name}: {len(records)} tracks -> {len(new)} windows")
 
     samples = [s for s in samples if s["label"] in classes]
@@ -154,9 +181,14 @@ def main():
                         refh=np.array([s["refh"] for s in samples], np.float32),
                         labels=np.array([s["label"] for s in samples]),
                         groups=np.array([s["group"] for s in samples]),
-                        classes=np.array(classes))
+                        classes=np.array(classes),
+                        fps=np.float32(sample_fps))
     counts = {c: sum(s["label"] == c for s in samples) for c in classes}
     print(f"Saved {len(samples)} windows to {out}. Windows per class: {counts}")
+    if empty_clips:
+        print(f"\n{len(empty_clips)} clip(s) gave no samples, so check or re-record them:")
+        for clip in empty_clips:
+            print(f"  {clip}")
 
 
 if __name__ == "__main__":

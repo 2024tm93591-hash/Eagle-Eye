@@ -1,5 +1,5 @@
 // Shared by every dashboard page: the live event stream, alert cards/toasts and the activity bars.
-const TV = (() => {
+const EE = (() => {
   const handlers = { alert: [], stats: [], ack: [] };
   const LEVELS = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
   let audioCtx = null;
@@ -78,11 +78,11 @@ const TV = (() => {
 
   function alertCard(a, withAck = true) {
     const snapshot = a.snapshot
-      ? ` · <a href="#" onclick="TV.showSnapshot('${esc(a.snapshot)}', '${esc(a.description)}'); return false">snapshot</a>`
+      ? ` · <a href="#" onclick="EE.showSnapshot('${esc(a.snapshot)}', '${esc(a.description)}'); return false">snapshot</a>`
       : "";
     let ack = "";
     if (a.acknowledged) ack = `<span class="pill">acknowledged</span>`;
-    else if (withAck) ack = `<button class="btn small" onclick="TV.ack('${a.id}', this)">Acknowledge</button>`;
+    else if (withAck) ack = `<button class="btn small" onclick="EE.ack('${a.id}', this)">Acknowledge</button>`;
 
     return `<div class="alert-card ${a.level} ${a.acknowledged ? "acked" : ""}" data-id="${a.id}">
       <div class="d">${esc(a.description)}</div>
