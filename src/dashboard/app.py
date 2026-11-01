@@ -18,7 +18,7 @@ from ..pipeline.processor import VideoProcessor
 from ..storage.db import EventStore
 from ..threat.alerts import AlertManager
 
-log = logging.getLogger("threatvision.dashboard")
+log = logging.getLogger("eagleeye.dashboard")
 
 VIDEO_DIR = PROJECT_ROOT / "data" / "videos"
 ALLOWED_VIDEO = {".mp4", ".avi", ".mov", ".mkv", ".webm"}
@@ -163,7 +163,7 @@ def create_app(cfg: dict, start_processor: bool = True) -> Flask:
         for row in store.query_alerts(limit=100000):
             writer.writerow([json.dumps(row[c]) if isinstance(row[c], list) else row[c] for c in columns])
         return Response(out.getvalue(), mimetype="text/csv",
-                        headers={"Content-Disposition": "attachment; filename=threatvision_events.csv"})
+                        headers={"Content-Disposition": "attachment; filename=eagle_eye_events.csv"})
 
     @app.route("/api/source", methods=["POST"])
     def api_source():

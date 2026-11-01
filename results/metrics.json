@@ -99,5 +99,271 @@
       }
     }
   },
-  "generated_at": "2026-09-24 01:36"
+  "generated_at": "2026-10-31 12:01",
+  "activity": {
+    "dataset": "dataset (420 test windows)",
+    "samples": 420,
+    "classes": [
+      "standing",
+      "walking",
+      "running",
+      "fighting",
+      "falling"
+    ],
+    "notes": "Test videos are kept apart from training videos. Precision, recall and F1 are averaged over the classes",
+    "algorithms": {
+      "Rule-based (pose geometry + motion)": {
+        "accuracy": 0.5024,
+        "precision": 0.5735,
+        "recall": 0.4819,
+        "f1": 0.4399,
+        "per_class": {
+          "standing": {
+            "precision": 0.4481,
+            "recall": 0.9223,
+            "f1": 0.6032,
+            "support": 103
+          },
+          "walking": {
+            "precision": 0.336,
+            "recall": 0.6562,
+            "f1": 0.4444,
+            "support": 64
+          },
+          "running": {
+            "precision": 0.8333,
+            "recall": 0.4478,
+            "f1": 0.5825,
+            "support": 67
+          },
+          "fighting": {
+            "precision": 1.0,
+            "recall": 0.2402,
+            "f1": 0.3874,
+            "support": 179
+          },
+          "falling": {
+            "precision": 0.25,
+            "recall": 0.1429,
+            "f1": 0.1818,
+            "support": 7
+          }
+        },
+        "confusion": [
+          [
+            95,
+            6,
+            2,
+            0,
+            0
+          ],
+          [
+            22,
+            42,
+            0,
+            0,
+            0
+          ],
+          [
+            7,
+            30,
+            30,
+            0,
+            0
+          ],
+          [
+            88,
+            42,
+            3,
+            43,
+            3
+          ],
+          [
+            0,
+            5,
+            1,
+            0,
+            1
+          ]
+        ],
+        "labels": [
+          "standing",
+          "walking",
+          "running",
+          "fighting",
+          "falling"
+        ],
+        "samples": 420,
+        "fps": 365.2
+      },
+      "Bi-LSTM + attention": {
+        "accuracy": 0.7619,
+        "precision": 0.7039,
+        "recall": 0.7784,
+        "f1": 0.7125,
+        "per_class": {
+          "standing": {
+            "precision": 0.662,
+            "recall": 0.9126,
+            "f1": 0.7673,
+            "support": 103
+          },
+          "walking": {
+            "precision": 0.5765,
+            "recall": 0.7656,
+            "f1": 0.6577,
+            "support": 64
+          },
+          "running": {
+            "precision": 0.86,
+            "recall": 0.6418,
+            "f1": 0.735,
+            "support": 67
+          },
+          "fighting": {
+            "precision": 0.9922,
+            "recall": 0.7151,
+            "f1": 0.8312,
+            "support": 179
+          },
+          "falling": {
+            "precision": 0.4286,
+            "recall": 0.8571,
+            "f1": 0.5714,
+            "support": 7
+          }
+        },
+        "confusion": [
+          [
+            94,
+            9,
+            0,
+            0,
+            0
+          ],
+          [
+            8,
+            49,
+            7,
+            0,
+            0
+          ],
+          [
+            2,
+            21,
+            43,
+            1,
+            0
+          ],
+          [
+            38,
+            5,
+            0,
+            128,
+            8
+          ],
+          [
+            0,
+            1,
+            0,
+            0,
+            6
+          ]
+        ],
+        "labels": [
+          "standing",
+          "walking",
+          "running",
+          "fighting",
+          "falling"
+        ],
+        "samples": 420,
+        "fps": 832.7
+      },
+      "Temporal ConvNet (TCN)": {
+        "accuracy": 0.85,
+        "precision": 0.7477,
+        "recall": 0.8521,
+        "f1": 0.7705,
+        "per_class": {
+          "standing": {
+            "precision": 0.8319,
+            "recall": 0.9612,
+            "f1": 0.8919,
+            "support": 103
+          },
+          "walking": {
+            "precision": 0.7353,
+            "recall": 0.7812,
+            "f1": 0.7576,
+            "support": 64
+          },
+          "running": {
+            "precision": 0.9048,
+            "recall": 0.8507,
+            "f1": 0.8769,
+            "support": 67
+          },
+          "fighting": {
+            "precision": 0.9667,
+            "recall": 0.8101,
+            "f1": 0.8815,
+            "support": 179
+          },
+          "falling": {
+            "precision": 0.3,
+            "recall": 0.8571,
+            "f1": 0.4444,
+            "support": 7
+          }
+        },
+        "confusion": [
+          [
+            99,
+            4,
+            0,
+            0,
+            0
+          ],
+          [
+            4,
+            50,
+            5,
+            5,
+            0
+          ],
+          [
+            0,
+            10,
+            57,
+            0,
+            0
+          ],
+          [
+            16,
+            3,
+            1,
+            145,
+            14
+          ],
+          [
+            0,
+            1,
+            0,
+            0,
+            6
+          ]
+        ],
+        "labels": [
+          "standing",
+          "walking",
+          "running",
+          "fighting",
+          "falling"
+        ],
+        "samples": 420,
+        "fps": 946.0
+      }
+    }
+  }
 }

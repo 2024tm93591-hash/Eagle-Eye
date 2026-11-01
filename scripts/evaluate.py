@@ -219,6 +219,7 @@ def eval_activity(cfg, args):
                 continue
             import torch
             from src.activity.models import build_model
+            from src.activity.recognizer import pick_label
 
             checkpoint = torch.load(path, map_location="cpu", weights_only=False)
             model = build_model(backend, len(checkpoint["classes"]))
@@ -228,10 +229,11 @@ def eval_activity(cfg, args):
             X = ((X - np.asarray(checkpoint["mean"], np.float32)) / np.asarray(checkpoint["std"], np.float32))
             started = time.perf_counter()
             with torch.no_grad():
-                out = model(torch.from_numpy(X.astype(np.float32))).argmax(1).numpy()
+                probs = torch.softmax(model(torch.from_numpy(X.astype(np.float32))), 1).numpy()
             elapsed = time.perf_counter() - started
             frames = len(test)   # live, the model runs once per frame on the latest window
-            predicted = [checkpoint["classes"][i] for i in out]
+            limit = cfg["activity"].get("fight_min_confidence", 0.0)
+            predicted = [pick_label(p, checkpoint["classes"], limit)[0] for p in probs]
             name = {"lstm": "Bi-LSTM + attention", "tcn": "Temporal ConvNet (TCN)"}[backend]
 
         metrics = classification_report(actual, predicted, classes)

@@ -18,7 +18,7 @@ from ..core import ThreatAlert
 from ..storage.db import EventStore
 from .assessment import level_rank
 
-log = logging.getLogger("threatvision.alerts")
+log = logging.getLogger("eagleeye.alerts")
 
 
 class AlertManager:
@@ -92,7 +92,7 @@ class AlertManager:
 
     def _email(self, settings, alert):
         msg = EmailMessage()
-        msg["Subject"] = f"ThreatVision {alert['level']} alert: {alert['type'].replace('_', ' ')}"
+        msg["Subject"] = f"Eagle Eye {alert['level']} alert: {alert['type'].replace('_', ' ')}"
         msg["From"] = settings["username"]
         msg["To"] = ", ".join(settings["to"])
         msg.set_content(self._message(alert))

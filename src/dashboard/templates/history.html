@@ -59,18 +59,18 @@ document.querySelectorAll("#lvlChips .chip").forEach(chip => {
 function alertRow(a) {
   const snapshot = a.snapshot
     ? `<img class="thumb" loading="lazy" src="/snapshots/${encodeURIComponent(a.snapshot)}"
-         onclick="TV.showSnapshot('${TV.esc(a.snapshot)}', '${TV.esc(a.description)}')">`
+         onclick="EE.showSnapshot('${EE.esc(a.snapshot)}', '${EE.esc(a.description)}')">`
     : "";
   const ack = a.acknowledged
     ? '<span class="pill">acknowledged</span>'
-    : `<button class="btn small" onclick="TV.ack('${a.id}', this)">Acknowledge</button>`;
+    : `<button class="btn small" onclick="EE.ack('${a.id}', this)">Acknowledge</button>`;
   return `<tr>
     <td>${snapshot}</td>
-    <td>${TV.esc(a.time)}<div class="muted">${TV.esc(a.camera)}</div></td>
+    <td>${EE.esc(a.time)}<div class="muted">${EE.esc(a.camera)}</div></td>
     <td><span class="lvl ${a.level}">${a.level} ${Math.round(a.score)}</span></td>
-    <td><b>${TV.esc(a.description)}</b><div class="muted">${TV.esc(TV.fmtType(a.type))}</div></td>
+    <td><b>${EE.esc(a.description)}</b><div class="muted">${EE.esc(EE.fmtType(a.type))}</div></td>
     <td class="num">${a.duration ? a.duration.toFixed(0) + "s" : "–"}</td>
-    <td class="muted" style="max-width:320px">${TV.esc(a.reasons.join(" · "))}</td>
+    <td class="muted" style="max-width:320px">${EE.esc(a.reasons.join(" · "))}</td>
     <td>${ack}</td>
   </tr>`;
 }
@@ -98,7 +98,7 @@ async function load(newOffset) {
   pageInfo.textContent = data.length ? `Showing ${offset + 1}–${offset + data.length}` : "";
 }
 
-TV.on("alert", () => { if (offset === 0) load(0); });
+EE.on("alert", () => { if (offset === 0) load(0); });
 load(0);
 </script>
 {% endblock %}

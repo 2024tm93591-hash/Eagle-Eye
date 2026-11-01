@@ -106,7 +106,8 @@ def main():
               f"recall {test['recall']:.3f}  F1 {test['f1']:.3f}")
     out = Path(args.out or f"models/activity_{args.model}.pt")
     out.parent.mkdir(parents=True, exist_ok=True)
-    torch.save({"state_dict": model.state_dict(), "classes": classes, "window": int(d["times"].shape[1]),
+    fps = float(d["fps"]) if "fps" in d else None   # sampling rate the sequences were cut at
+    torch.save({"state_dict": model.state_dict(), "classes": classes, "window": int(d["times"].shape[1]), "fps": fps,
                 "mean": mean.tolist(), "std": std.tolist(), "kind": args.model, "val_f1": best, "test": test,
                 "data": str(args.data), "seed": args.seed}, out)
     print(f"saved {out}")
